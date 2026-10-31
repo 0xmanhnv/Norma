@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/Autumn-27/norma/tool"
 )
 
 // stdioCloser shuts down a spawned MCP server process and its pipes.
@@ -31,7 +33,15 @@ func (s *stdioCloser) Close() error {
 // applied on top of the parent process environment; pass nil for none.
 func NewStdioClient(ctx context.Context, server, command string, env map[string]string, args ...string) (*Client, error) {
 	cmd := exec.Command(command, args...)
-	if len(env) > 0 {
+	if tool.CurrentChildProcess() != nil { // clean env / credential / deny (see tool.ChildProcess)
+		var extra []string
+		for k, v := range env {
+			extra = append(extra, k+"="+v)
+		}
+		if err := tool.PrepareChild(cmd, extra, true); err != nil {
+			return nil, err
+		}
+	} else if len(env) > 0 {
 		cmd.Env = os.Environ()
 		for k, v := range env {
 			cmd.Env = append(cmd.Env, k+"="+v)

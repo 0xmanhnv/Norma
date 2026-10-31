@@ -160,9 +160,12 @@ func runBashSync(ctx context.Context, tc *ToolContext, command string, timeout t
 	cmd := exec.CommandContext(cctx, shell, append(flags, command)...)
 	if tc != nil {
 		cmd.Dir = tc.WorkingDir
-		cmd.Env = withEnv(tc.Env)
+		cmd.Env = withEnvIn(tc.WorkingDir, tc.Env)
 	} else {
 		cmd.Env = withEnv(nil)
+	}
+	if err := applyChild(cmd); err != nil {
+		return Errorf("Error: failed to start command: " + err.Error()), nil
 	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

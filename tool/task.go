@@ -159,7 +159,11 @@ var nonInteractiveEnv = []string{
 // (mcp/stdio.go relies on exec's last-wins dedup and is fine as it is.)
 //
 // The result is never nil — the defaults always apply.
-func withEnv(extra []string) []string {
+func withEnv(extra []string) []string { return withEnvIn("", extra) }
+
+// withEnvIn is withEnv for a child started in dir (the CleanEnv HOME fallback,
+// see ChildProcess).
+func withEnvIn(dir string, extra []string) []string {
 	extraKeys := make(map[string]bool, len(extra))
 	for _, kv := range extra {
 		if k := envKey(kv); k != "" {
@@ -175,7 +179,7 @@ func withEnv(extra []string) []string {
 			drop[k] = true
 		}
 	}
-	base := os.Environ()
+	base := baseEnv(dir)
 	out := make([]string, 0, len(base)+len(nonInteractiveEnv)+len(extra))
 	for _, kv := range base {
 		if k := envKey(kv); k != "" && drop[k] {
@@ -330,12 +334,16 @@ func (m *Manager) Spawn(spec SpawnSpec) (*Task, error) {
 	shell, flags := shellCmd()
 	cmd := exec.CommandContext(m.rootCtx, shell, append(flags, spec.Command)...)
 	cmd.Dir = spec.WorkingDir
-	cmd.Env = withEnv(spec.Env)
+	cmd.Env = withEnvIn(spec.WorkingDir, spec.Env)
 	cmd.Stdout = f
 	cmd.Stderr = f
 	setDetached(cmd)
 
-	if err := cmd.Start(); err != nil {
+	err = applyChild(cmd)
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(outPath)
 		return nil, err
