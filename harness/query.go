@@ -32,7 +32,9 @@ type QueryInput struct {
 	// its own state: goal, scope, open work, what was already tried). Placing it
 	// at the end keeps the cached prompt prefix intact.
 	WorkingFrame func(ctx context.Context) string
-	Tools        *tool.Registry
+	// Tracer, when non-nil, receives a span for every model call and tool call.
+	Tracer Tracer
+	Tools  *tool.Registry
 	// DeferredTools names tools whose schemas are withheld from the model's tool
 	// list (they stay in Tools and are invoked via ExecuteExtraTool). Empty = all
 	// tool schemas sent as usual.
@@ -215,6 +217,7 @@ func (d *QueryDeps) withDefaults(in QueryInput) {
 // always KindResult carrying a Terminal (unless the consumer stops early).
 func Query(ctx context.Context, in QueryInput, deps QueryDeps) iter.Seq2[Event, error] {
 	deps.withDefaults(in)
+	deps.traced(in.Tracer)
 	conc := in.MaxConcurrency
 	if conc <= 0 {
 		conc = 10

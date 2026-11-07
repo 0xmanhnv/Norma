@@ -95,7 +95,15 @@ func (l *loop) execOne(use llm.ContentBlock, emitProgress func(tool.ProgressInfo
 	// toolCtx carries the run's MaxDuration deadline, so a tool that overruns the
 	// wall-clock budget is interrupted here (the turn loop then enters wrap-up). During
 	// the wrap-up phase toolCtx is the live parent ctx, so settlement tools run freely.
-	res, err := t.Call(l.toolCtx, input, tc)
+	callCtx := l.toolCtx
+	var endSpan func(error, map[string]any)
+	if l.in.Tracer != nil {
+		callCtx, endSpan = l.in.Tracer.Start(l.toolCtx, "tool.call", map[string]any{"tool": use.Name, "tool_use_id": use.ID})
+	}
+	res, err := t.Call(callCtx, input, tc)
+	if endSpan != nil {
+		endSpan(err, map[string]any{"is_error": err != nil || res.IsError})
+	}
 	if err != nil {
 		res = tool.Errorf("Error: " + err.Error())
 	}
