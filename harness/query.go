@@ -7,6 +7,7 @@ import (
 	"iter"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -238,6 +239,10 @@ type budgetTracker struct {
 
 type loop struct {
 	ctx context.Context
+	// subUsage sums SubagentUsage reported by tool results; tools run on their own
+	// goroutines, hence the lock.
+	subMu    sync.Mutex
+	subUsage llm.Usage
 	// toolCtx bounds tool execution with the run's MaxDuration deadline, so a tool
 	// that overruns the wall-clock budget is interrupted mid-flight (the model call
 	// stays on ctx — streams are never cut mid-flight). Derived from ctx, so a parent
@@ -362,12 +367,13 @@ func countBoundaries(msgs []llm.Message) int {
 
 func (l *loop) finish(reason TerminalReason, err error, text string) {
 	l.yield(Event{Kind: KindResult, Terminal: &Terminal{
-		Reason:   reason,
-		Err:      err,
-		Usage:    l.usage,
-		Turns:    l.turnCount,
-		Messages: l.messages,
-		Text:     text,
+		Reason:        reason,
+		Err:           err,
+		Usage:         l.usage,
+		SubagentUsage: l.subagentUsage(),
+		Turns:         l.turnCount,
+		Messages:      l.messages,
+		Text:          text,
 	}}, nil)
 }
 

@@ -22,7 +22,7 @@ type Definition struct {
 	Description    string          // shown to the parent model in the Agent tool prompt
 	Prompt         []string        // the subagent's system prompt
 	Tools          []string        // tool names it may use (empty = inherit all)
-	PermissionMode permission.Mode // its permission mode (default: parent's)
+	PermissionMode permission.Mode // can only tighten the parent's mode; empty = the parent's
 	MaxTurns       int
 }
 
@@ -88,11 +88,15 @@ func NewTool(cfg Config) tool.CoreTool {
 			if !ok {
 				return tool.Errorf(fmt.Sprintf("Error: unknown agent_type %q", in.AgentType)), nil
 			}
-			text, err := run(ctx, cfg, def, in.AgentType, in.Prompt, tc.WorkingDir)
+			text, sum, err := run(ctx, cfg, def, in.AgentType, in.Prompt, tc.WorkingDir)
 			if err != nil {
-				return tool.Errorf("Error: subagent failed: " + err.Error()), nil
+				res := tool.Errorf("Error: subagent failed: " + err.Error())
+				res.Data = sum
+				return res, nil
 			}
-			return tool.Text(text), nil
+			res := tool.Text(text)
+			res.Data = sum
+			return res, nil
 		},
 	})
 }
@@ -105,11 +109,31 @@ func Run(ctx context.Context, cfg Config, agentType, prompt, workDir string) (st
 	if !ok {
 		return "", fmt.Errorf("subagent: unknown agent_type %q", agentType)
 	}
-	return run(ctx, cfg, def, agentType, prompt, workDir)
+	text, _, err := run(ctx, cfg, def, agentType, prompt, workDir)
+	return text, err
 }
 
+// ChildSummary is the Data of an Agent tool result: what the subagent cost and
+// how it ended. Its usage includes the subagent's own subagents.
+type ChildSummary struct {
+	AgentType string
+	Usage     llm.Usage
+	Turns     int
+	Reason    harness.TerminalReason
+}
+
+// SubagentUsage lets the calling run add the child's usage to its totals.
+func (c ChildSummary) SubagentUsage() llm.Usage { return c.Usage }
+
 // run executes a subagent to completion and returns its final text.
-func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, workDir string) (string, error) {
+//
+// When it is started from a tool call, the child inherits the calling run's
+// safety settings and plumbing (harness.ParentRun): its deny and allow rules,
+// BashEnv, tool-output spill settings, tracer, OnToolResult and Settlement. Its
+// permission mode is the stricter of the parent's and the definition's, so a
+// child never runs with fewer restrictions than its parent.
+func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, workDir string) (string, ChildSummary, error) {
+	sum := ChildSummary{AgentType: agentType}
 	if cfg.Hooks != nil {
 		if hs, ok := cfg.Hooks.(interface {
 			FireSubagentStart(context.Context, string)
@@ -133,6 +157,24 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		CanUseTool:     cfg.CanUseTool,
 		Hooks:          cfg.Hooks,
 	}
+	if p, ok := harness.ParentRunFrom(ctx); ok {
+		mode := p.PermissionMode
+		if def.PermissionMode != "" {
+			mode = harness.StricterMode(p.PermissionMode, def.PermissionMode)
+		}
+		in.PermissionMode = mode
+		in.Allowed = p.Allowed
+		in.Disallowed = p.Disallowed
+		in.BashEnv = p.BashEnv
+		in.ToolOutputDir = p.ToolOutputDir
+		in.MaxToolOutputChars = p.MaxToolOutputChars
+		in.Tracer = p.Tracer
+		in.OnToolResult = p.OnToolResult
+		in.Settlement = p.Settlement
+		if p.AgentID != "" {
+			in.AgentID = p.AgentID + "/" + agentType
+		}
+	}
 	// Persist this run to its own sidechain under the parent session.
 	if cfg.Transcript != nil {
 		parentSID := transcript.SessionIDFrom(ctx)
@@ -147,14 +189,18 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 	var rerr error
 	for ev, err := range harness.Query(childCtx, in, harness.QueryDeps{}) {
 		if err != nil {
-			return "", err
+			return "", sum, err
 		}
 		if ev.Kind == harness.KindResult && ev.Terminal != nil {
 			final = ev.Terminal.Text
 			rerr = ev.Terminal.Err
+			sum.Usage = ev.Terminal.Usage
+			sum.Usage.Add(ev.Terminal.SubagentUsage)
+			sum.Turns = ev.Terminal.Turns
+			sum.Reason = ev.Terminal.Reason
 		}
 	}
-	return final, rerr
+	return final, sum, rerr
 }
 
 // filterTools returns a registry with only the named tools (all if names empty).

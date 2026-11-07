@@ -64,10 +64,14 @@ const (
 
 // Terminal is the final state of a Query, delivered as the KindResult event.
 type Terminal struct {
-	Reason   TerminalReason
-	Err      error
-	Usage    llm.Usage
-	Turns    int
-	Messages []llm.Message // full conversation snapshot (non-destructive: retains history)
-	Text     string        // the assistant's final text, for convenience
+	Reason TerminalReason
+	Err    error
+	Usage  llm.Usage
+	// SubagentUsage is what agents started by this run's tools used (subagents and
+	// theirs, all the way down). It is kept apart from Usage, which only counts this
+	// run's own model calls and drives its token budget; the total cost is the sum.
+	SubagentUsage llm.Usage
+	Turns         int
+	Messages      []llm.Message // full conversation snapshot (non-destructive: retains history)
+	Text          string        // the assistant's final text, for convenience
 }

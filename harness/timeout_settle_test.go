@@ -38,7 +38,7 @@ func drainWithCtx(t *testing.T, ctx context.Context, in QueryInput, deps QueryDe
 func TestSettlementOnToolOverrunsBudget(t *testing.T) {
 	m := &scriptedModel{turns: [][]llm.StreamEvent{
 		toolTurn("s1", "sleep", `{"seconds":3600}`), // hangs far past MaxDuration
-		textTurn("已写回事实并总结"),                          // settlement turn → natural stop
+		textTurn("已写回事实并总结"),                        // settlement turn → natural stop
 	}}
 	in := QueryInput{
 		Messages:       []llm.Message{llm.UserText("go")},

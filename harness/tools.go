@@ -96,7 +96,7 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	// toolCtx carries the run's MaxDuration deadline, so a tool that overruns the
 	// wall-clock budget is interrupted here (the turn loop then enters wrap-up). During
 	// the wrap-up phase toolCtx is the live parent ctx, so settlement tools run freely.
-	callCtx := toolCtx
+	callCtx := context.WithValue(toolCtx, parentKey{}, l.parentRun(mode))
 	var endSpan func(error, map[string]any)
 	if l.in.Tracer != nil {
 		callCtx, endSpan = l.in.Tracer.Start(toolCtx, "tool.call", map[string]any{"tool": use.Name, "tool_use_id": use.ID})
@@ -115,6 +115,9 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	// output a tool already spilled/truncated carries a marker and is left
 	// untouched, so this never double-truncates or double-spills.
 	res = capOutput(tc, res)
+	if r, ok := res.Data.(SubagentUsageReporter); ok {
+		l.addSubagentUsage(r.SubagentUsage())
+	}
 
 	if l.in.OnToolResult != nil {
 		l.in.OnToolResult(l.ctx, use.ID, use.Name, input, res)
