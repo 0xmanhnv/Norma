@@ -147,6 +147,10 @@ type Options struct {
 	// The SDK always injects today's date into the reminder regardless of whether
 	// this is set. Return "" to include only the date.
 	SystemReminderFunc func() string
+	// WorkingFrame is rebuilt before every model call and appended to that
+	// request only (see harness.QueryInput.WorkingFrame): host state that must
+	// survive compaction and stay current within a Prompt.
+	WorkingFrame func(ctx context.Context) string
 
 	MaxTurns int
 	// MaxDuration bounds wall-clock run time, checked at the turn boundary (never
@@ -498,6 +502,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		DynamicBoundary:    s.opts.DynamicBoundary,
 		Messages:           s.messages,
 		SystemReminder:     buildSystemReminder(reminderExtra),
+		WorkingFrame:       s.opts.WorkingFrame,
 		Tools:              s.registry,
 		DeferredTools:      s.opts.DeferredTools,
 		MaxTokens:          s.opts.MaxTokens,

@@ -25,7 +25,14 @@ type QueryInput struct {
 	// model call. It is not stored in conversation history — the host builds it
 	// fresh per Prompt call so it never accumulates across turns.
 	SystemReminder string
-	Tools          *tool.Registry
+	// WorkingFrame, when non-nil, is called before every model call; a non-empty
+	// result is appended as a text block to the last user message of that
+	// request only. It never enters the conversation history, so no compaction
+	// strategy can drop it and it is always current (the host rebuilds it from
+	// its own state: goal, scope, open work, what was already tried). Placing it
+	// at the end keeps the cached prompt prefix intact.
+	WorkingFrame func(ctx context.Context) string
+	Tools        *tool.Registry
 	// DeferredTools names tools whose schemas are withheld from the model's tool
 	// list (they stay in Tools and are invoked via ExecuteExtraTool). Empty = all
 	// tool schemas sent as usual.
@@ -790,6 +797,9 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 	if l.in.SystemReminder != "" {
 		msgs = append([]llm.Message{llm.UserText(l.in.SystemReminder)}, msgs...)
 	}
+	if l.in.WorkingFrame != nil {
+		msgs = withWorkingFrame(msgs, l.in.WorkingFrame(l.ctx))
+	}
 	req := llm.CompletionRequest{
 		System:          l.in.System,
 		DynamicBoundary: l.in.DynamicBoundary,
@@ -954,4 +964,21 @@ func jsonValid(s string) bool {
 		}
 	}
 	return depth == 0 && !inStr
+}
+
+// withWorkingFrame appends frame as a text block to the request's last user
+// message, copying so the loop's history is never touched. With no trailing user
+// message it adds one.
+func withWorkingFrame(msgs []llm.Message, frame string) []llm.Message {
+	if frame == "" {
+		return msgs
+	}
+	out := append([]llm.Message{}, msgs...)
+	if n := len(out); n > 0 && out[n-1].Role == llm.RoleUser {
+		last := out[n-1]
+		last.Content = append(append([]llm.ContentBlock{}, last.Content...), llm.TextBlock(frame))
+		out[n-1] = last
+		return out
+	}
+	return append(out, llm.UserText(frame))
 }
