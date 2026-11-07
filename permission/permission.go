@@ -8,7 +8,6 @@ package permission
 import (
 	"context"
 	"encoding/json"
-	"strings"
 )
 
 // Behavior is the kind of a permission decision.
@@ -78,14 +77,21 @@ type Request struct {
 	ToolDecision Decision // verdict from the tool's own CheckPermissions
 	Ctx          Context
 	Ask          CanUseTool
+	// Subject is what "Name(spec)" rules match against. Nil means derive it from
+	// Input (SubjectOf); a host can set it for tools whose subject is elsewhere.
+	Subject *Subject
 }
 
 // Evaluate runs the four-stage pipeline (FR-05.3) and returns the final
 // decision. Order encodes deny-priority (FR-05.5): an explicit deny rule wins
 // over every mode, including bypass.
 func Evaluate(ctx context.Context, req Request) Decision {
+	sub := SubjectOf(req.Input)
+	if req.Subject != nil {
+		sub = *req.Subject
+	}
 	// Stage 1 — deny rules (absolute priority).
-	if matchRule(req.Ctx.Disallowed, req.ToolName) {
+	if matchRule(req.Ctx.Disallowed, req.ToolName, sub, true) {
 		return Denied("denied: tool '" + req.ToolName + "' is disallowed by policy")
 	}
 	// A tool that hard-denies (e.g. failed self-validation) is also absolute.
@@ -105,7 +111,7 @@ func Evaluate(ctx context.Context, req Request) Decision {
 	}
 
 	// Stage 3 — allow rules and mode-based auto-allows.
-	if matchRule(req.Ctx.Allowed, req.ToolName) {
+	if matchRule(req.Ctx.Allowed, req.ToolName, sub, false) {
 		return Allowed()
 	}
 	if req.Ctx.Mode == ModeAcceptEdits && editTools[req.ToolName] {
@@ -133,19 +139,4 @@ func Evaluate(ctx context.Context, req Request) Decision {
 		return d
 	}
 	return Denied("denied: no approval handler configured for '" + req.ToolName + "'")
-}
-
-// matchRule reports whether toolName matches any rule. A rule is either a bare
-// tool name, "*" (any), or "Name(...)" whose Name part matches.
-func matchRule(rules []string, toolName string) bool {
-	for _, r := range rules {
-		r = strings.TrimSpace(r)
-		if r == "*" || r == toolName {
-			return true
-		}
-		if i := strings.IndexByte(r, '('); i > 0 && r[:i] == toolName {
-			return true
-		}
-	}
-	return false
 }
