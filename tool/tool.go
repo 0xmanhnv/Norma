@@ -65,6 +65,11 @@ type Result struct {
 	// instructions as an independent user message rather than burying them in the
 	// tool_result). Appended in order; nil for ordinary tools.
 	Extra []llm.Message
+	// Data is a structured payload for the host only: it is never serialized into
+	// the conversation, so a tool can show the model a short summary while handing
+	// the host the full typed record (and pointers to raw output) through
+	// harness.QueryInput.OnToolResult. Nil for ordinary tools.
+	Data any
 }
 
 // Text builds a successful text result.

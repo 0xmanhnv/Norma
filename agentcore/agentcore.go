@@ -7,6 +7,7 @@ package agentcore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
 	"strings"
@@ -59,6 +60,10 @@ type Options struct {
 
 	// Hooks is optional lifecycle instrumentation (Phase 3).
 	Hooks harness.HookRunner
+	// OnToolResult receives every tool's full result, including the host-only
+	// tool.Result.Data (see harness.QueryInput.OnToolResult). Must be safe for
+	// concurrent use.
+	OnToolResult func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
 
 	// Compaction, when non-nil, enables automatic context-window management,
 	// summarizing with the same Provider. Ignored when Compactor is set.
@@ -512,6 +517,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		Disallowed:         s.opts.DisallowedTools,
 		CanUseTool:         s.opts.CanUseTool,
 		Hooks:              s.opts.Hooks,
+		OnToolResult:       s.opts.OnToolResult,
 		Compactor:          s.compactor,
 		TokenBudget:        s.opts.TokenBudget,
 		EscalateMaxTokens:  s.opts.EscalateMaxTokens,

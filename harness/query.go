@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"iter"
 	"strconv"
@@ -81,6 +82,11 @@ type QueryInput struct {
 
 	// Hooks is optional lifecycle instrumentation. Nil disables it.
 	Hooks HookRunner
+	// OnToolResult, when non-nil, receives every tool's complete result — after
+	// the output cap, before the result enters the conversation — including
+	// tool.Result.Data, which the model never sees. It runs on the tool's
+	// goroutine (tools may run in parallel), so it must be safe for concurrent use.
+	OnToolResult func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
 	// Compactor is optional context-window management. Nil disables it.
 	Compactor Compactor
 	// Recorder, when non-nil, is notified as the conversation grows so a host can
