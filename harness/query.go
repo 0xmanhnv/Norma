@@ -133,6 +133,13 @@ type Settlement struct {
 	Prompt        string   // wrap-up instruction injected as a user turn (empty = settlement off)
 	MaxTurns      int      // turn budget for the wrap-up phase itself (0 = default 2)
 	DisabledTools []string // tool names hidden from the model during wrap-up (e.g. ["Bash"])
+	// KeepToolSchemas leaves DisabledTools in the tool list during wrap-up and
+	// refuses their calls instead. Removing a schema changes the request prefix,
+	// and with it every prompt cache over the tools and the conversation, so the
+	// wrap-up turns would re-send the whole history uncached. A refused call gets
+	// an error result naming the reason; calls through ExecuteExtraTool are
+	// checked by the target tool's name.
+	KeepToolSchemas bool
 	// PromptByReason optionally overrides Prompt based on WHY the run settled
 	// (keyed by the terminal reason, e.g. ReasonTimeout / ReasonMaxTurns). When the
 	// settling reason has a non-empty entry here it is used; otherwise Prompt is used.
@@ -648,10 +655,33 @@ func (l *loop) beginSettlement(reason TerminalReason, schemas *[]llm.ToolSchema)
 	l.settling = true
 	l.settleReason = reason
 	l.settleTurn = 0
-	if len(s.DisabledTools) > 0 {
+	if len(s.DisabledTools) > 0 && !s.KeepToolSchemas {
 		*schemas = filterToolSchemas(*schemas, s.DisabledTools)
 	}
 	return true
+}
+
+// settleRefusal returns the error text for a call made during wrap-up to a tool
+// the settlement disables while keeping its schema, or "" when the call may run.
+func (l *loop) settleRefusal(use llm.ContentBlock) string {
+	s := l.in.Settlement
+	if !l.settling || s == nil || !s.KeepToolSchemas || len(s.DisabledTools) == 0 {
+		return ""
+	}
+	name := use.Name
+	if name == tool.ExecuteExtraToolName {
+		var args struct {
+			ToolName string `json:"tool_name"`
+		}
+		_ = json.Unmarshal(use.Input, &args)
+		name = args.ToolName
+	}
+	for _, d := range s.DisabledTools {
+		if d == name {
+			return fmt.Sprintf("Error: %s is not available during wrap-up. Write back what you have and finish.", name)
+		}
+	}
+	return ""
 }
 
 // filterToolSchemas returns schemas with the named tools removed.

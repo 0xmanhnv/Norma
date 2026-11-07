@@ -32,6 +32,9 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 		return llm.ToolResultText(use.ID, fmt.Sprintf("Error: unknown tool %q", use.Name), true), nil
 	}
 	input := use.Input
+	if msg := l.settleRefusal(use); msg != "" {
+		return llm.ToolResultText(use.ID, msg, true), nil
+	}
 
 	// Schema validation (FR-04.5).
 	//

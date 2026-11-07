@@ -3,6 +3,8 @@ package harness
 import (
 	"context"
 	"iter"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,4 +101,71 @@ func contains(xs []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// With KeepToolSchemas the wrap-up requests carry the same tool list as the run
+// before it (so a prompt cache over the tools and history still matches), and a
+// call to a disabled tool, direct or through ExecuteExtraTool, is refused
+// without running.
+func TestSettlementKeepToolSchemas(t *testing.T) {
+	var toolsSeen [][]string
+	turns := [][]llm.StreamEvent{
+		toolTurn("a", "Bash", `{"command":"echo 1"}`),
+		toolTurn("b", "Bash", `{"command":"touch ran-in-wrapup"}`),
+		toolTurn("c", tool.ExecuteExtraToolName, `{"tool_name":"Bash","params":{"command":"touch ran-via-extra"}}`),
+		textTurn("wrote back the facts"),
+	}
+	call := func(_ context.Context, req llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
+		names := make([]string, 0, len(req.Tools))
+		for _, ts := range req.Tools {
+			names = append(names, ts.Name)
+		}
+		i := len(toolsSeen)
+		toolsSeen = append(toolsSeen, names)
+		evs := turns[i]
+		return func(yield func(llm.StreamEvent, error) bool) {
+			for _, ev := range evs {
+				if !yield(ev, nil) {
+					return
+				}
+			}
+		}
+	}
+	dir := t.TempDir()
+	in := QueryInput{
+		Messages:       []llm.Message{llm.UserText("go")},
+		Tools:          tool.NewRegistry(tool.NewBash(), tool.NewExecuteExtraTool(tool.NewRegistry(tool.NewBash()), nil)),
+		PermissionMode: permission.ModeBypass,
+		WorkingDir:     dir,
+		MaxTurns:       1,
+		Settlement:     &Settlement{Prompt: "SETTLE_NOW", DisabledTools: []string{"Bash"}, KeepToolSchemas: true, MaxTurns: 5},
+	}
+	term := drain(t, in, QueryDeps{CallModel: call})
+	if term.Reason != ReasonMaxTurns {
+		t.Fatalf("reason=%v, want ReasonMaxTurns", term.Reason)
+	}
+	if len(toolsSeen) != 4 {
+		t.Fatalf("model calls = %d, want 4", len(toolsSeen))
+	}
+	for i := 1; i < len(toolsSeen); i++ {
+		if strings.Join(toolsSeen[i], ",") != strings.Join(toolsSeen[0], ",") {
+			t.Fatalf("tool list changed in wrap-up call %d: %v vs %v", i, toolsSeen[i], toolsSeen[0])
+		}
+	}
+	refused := 0
+	for _, m := range term.Messages {
+		for _, c := range m.Content {
+			if c.Type == llm.BlockToolResult && c.IsError && len(c.Content) == 1 && strings.Contains(c.Content[0].Text, "not available during wrap-up") {
+				refused++
+			}
+		}
+	}
+	if refused != 2 {
+		t.Fatalf("refused calls = %d, want 2", refused)
+	}
+	for _, f := range []string{"ran-in-wrapup", "ran-via-extra"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Fatalf("%s: the disabled tool ran during wrap-up", f)
+		}
+	}
 }
