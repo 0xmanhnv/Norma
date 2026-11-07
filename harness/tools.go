@@ -107,6 +107,9 @@ func (l *loop) execOne(use llm.ContentBlock, emitProgress func(tool.ProgressInfo
 	// untouched, so this never double-truncates or double-spills.
 	res = capOutput(tc, res)
 
+	if l.in.OnToolResult != nil {
+		l.in.OnToolResult(l.ctx, use.ID, use.Name, input, res)
+	}
 	if l.in.Hooks != nil {
 		raw, _ := json.Marshal(res.Flatten())
 		l.in.Hooks.PostToolUse(l.ctx, use.Name, input, raw, res.IsError)
