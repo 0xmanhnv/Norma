@@ -1,9 +1,9 @@
 package noaadapter
 
 import (
-	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/noa"
-	"github.com/Autumn-27/norma/tool"
+	"github.com/0xmanhnv/norma/agentcore"
+	"github.com/0xmanhnv/norma/noa"
+	"github.com/0xmanhnv/norma/tool"
 )
 
 // Enable wires noa into a set of agentcore Options.

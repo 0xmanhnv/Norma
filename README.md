@@ -6,7 +6,9 @@ You point it at any model (via the **Anthropic** *or* **OpenAI** wire format), d
 
 **What you get out of the box:** dual-format streaming, a fail-closed tool system with the standard file/shell toolset, a four-stage permission pipeline, automatic context-window management, lifecycle hooks, subagents, MCP, plan mode, long-term memory, a skill system, background tasks, and multi-agent coordination — all behind one stateful `Session`.
 
-Module path: `github.com/Autumn-27/norma` · Go 1.23+ (uses `iter`).
+Module path: `github.com/0xmanhnv/norma` · Go 1.23+ (uses `iter`).
+
+This is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma) (v0.4.4). Changes on top of upstream live on the `patches` branch and are released as `v0.4.4-p.N` tags.
 
 ## Packages
 

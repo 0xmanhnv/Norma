@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Autumn-27/norma/llm"
+	"github.com/0xmanhnv/norma/llm"
 )
 
 // The three harness-facing methods are the whole public surface between noa and

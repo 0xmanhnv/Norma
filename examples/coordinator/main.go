@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/coordinator"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/permission"
-	"github.com/Autumn-27/norma/skill"
-	"github.com/Autumn-27/norma/tool"
+	"github.com/0xmanhnv/norma/agentcore"
+	"github.com/0xmanhnv/norma/coordinator"
+	"github.com/0xmanhnv/norma/harness"
+	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/norma/permission"
+	"github.com/0xmanhnv/norma/skill"
+	"github.com/0xmanhnv/norma/tool"
 )
 
 func main() {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/permission"
-	"github.com/Autumn-27/norma/tool"
+	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/norma/permission"
+	"github.com/0xmanhnv/norma/tool"
 )
 
 // The working frame is rebuilt for every model call, rides at the end of that

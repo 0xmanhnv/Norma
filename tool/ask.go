@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Autumn-27/norma/permission"
+	"github.com/0xmanhnv/norma/permission"
 )
 
 // Option is one selectable choice for an AskUserQuestion.

@@ -1,6 +1,6 @@
 package tool
 
-import "github.com/Autumn-27/norma/llm"
+import "github.com/0xmanhnv/norma/llm"
 
 // Registry is an ordered, name-indexed collection of tools (FR-04.3).
 type Registry struct {
