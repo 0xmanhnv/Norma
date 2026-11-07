@@ -396,6 +396,47 @@ func (s *Session) Resume(sessionID string) error {
 // cleanResumed drops trailing assistant tool calls whose results were never
 // persisted — a crash mid-tool would otherwise leave a dangling tool_use that
 // the API rejects.
+// dropUnpairedTail removes a trailing tool exchange that didn't finish: an
+// assistant turn whose tool calls are not all answered, with any partial
+// results after it. Providers reject a request whose tool calls and results
+// don't pair up.
+func dropUnpairedTail(msgs []llm.Message) []llm.Message {
+	for len(msgs) > 0 {
+		last := msgs[len(msgs)-1]
+		if last.Role == llm.RoleAssistant && len(last.ToolUses()) > 0 {
+			msgs = msgs[:len(msgs)-1]
+			continue
+		}
+		if last.Role == llm.RoleUser && len(msgs) >= 2 && hasToolResults(last) {
+			answered := map[string]bool{}
+			for _, b := range last.Content {
+				if b.Type == llm.BlockToolResult {
+					answered[b.ToolUseID] = true
+				}
+			}
+			complete := true
+			for _, u := range msgs[len(msgs)-2].ToolUses() {
+				complete = complete && answered[u.ID]
+			}
+			if !complete {
+				msgs = msgs[:len(msgs)-1]
+				continue
+			}
+		}
+		break
+	}
+	return msgs
+}
+
+func hasToolResults(m llm.Message) bool {
+	for _, b := range m.Content {
+		if b.Type == llm.BlockToolResult {
+			return true
+		}
+	}
+	return false
+}
+
 func cleanResumed(msgs []llm.Message) []llm.Message {
 	for len(msgs) > 0 {
 		last := msgs[len(msgs)-1]
@@ -537,13 +578,20 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 	if s.planCtrl != nil {
 		in.PermissionModeFunc = s.planCtrl.Mode
 	}
+	// The session follows the loop however it ends. A caller that stops reading
+	// early would otherwise leave s.messages before this prompt, out of step with
+	// the transcript, and the next Prompt would resend a history without it.
+	in.OnExit = func(t *harness.Terminal) {
+		msgs := t.Messages
+		if t.Reason == harness.ReasonConsumerStopped {
+			msgs = dropUnpairedTail(msgs)
+		}
+		s.messages = msgs
+		s.usage = t.Usage
+	}
 	inner := harness.Query(ctx, in, s.opts.Deps)
 	return func(yield func(harness.Event, error) bool) {
 		for ev, err := range inner {
-			if ev.Kind == harness.KindResult && ev.Terminal != nil {
-				s.messages = ev.Terminal.Messages
-				s.usage = ev.Terminal.Usage
-			}
 			if !yield(ev, err) {
 				return
 			}

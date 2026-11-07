@@ -97,6 +97,12 @@ type QueryInput struct {
 	// tool.Result.Data, which the model never sees. It runs on the tool's
 	// goroutine (tools may run in parallel), so it must be safe for concurrent use.
 	OnToolResult func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
+	// OnExit, when set, is called exactly once when the loop returns, however it
+	// ends. Normally it gets the Terminal also sent as the KindResult event. When
+	// the consumer stopped reading first, no result event was sent; OnExit then
+	// gets Reason ReasonConsumerStopped and the conversation as far as it got, so
+	// a host can keep its state in step with what was recorded.
+	OnExit func(*Terminal)
 	// Compactor is optional context-window management. Nil disables it.
 	Compactor Compactor
 	// Recorder, when non-nil, is notified as the conversation grows so a host can
@@ -227,6 +233,14 @@ func Query(ctx context.Context, in QueryInput, deps QueryDeps) iter.Seq2[Event, 
 		l := &loop{ctx: ctx, in: in, deps: deps, yield: yield, sem: make(chan struct{}, conc)}
 		l.messages = append([]llm.Message(nil), in.Messages...)
 		l.run()
+		if in.OnExit != nil {
+			t := l.terminal
+			if t == nil {
+				t = &Terminal{Reason: ReasonConsumerStopped, Usage: l.usage, SubagentUsage: l.subagentUsage(),
+					Turns: l.turnCount, Messages: l.messages}
+			}
+			in.OnExit(t)
+		}
 	}
 }
 
@@ -243,6 +257,9 @@ type loop struct {
 	// goroutines, hence the lock.
 	subMu    sync.Mutex
 	subUsage llm.Usage
+	// terminal is the result finish emitted; nil when the loop stopped because
+	// the consumer did.
+	terminal *Terminal
 	// toolCtx bounds tool execution with the run's MaxDuration deadline, so a tool
 	// that overruns the wall-clock budget is interrupted mid-flight (the model call
 	// stays on ctx — streams are never cut mid-flight). Derived from ctx, so a parent
@@ -366,7 +383,7 @@ func countBoundaries(msgs []llm.Message) int {
 }
 
 func (l *loop) finish(reason TerminalReason, err error, text string) {
-	l.yield(Event{Kind: KindResult, Terminal: &Terminal{
+	l.terminal = &Terminal{
 		Reason:        reason,
 		Err:           err,
 		Usage:         l.usage,
@@ -374,7 +391,8 @@ func (l *loop) finish(reason TerminalReason, err error, text string) {
 		Turns:         l.turnCount,
 		Messages:      l.messages,
 		Text:          text,
-	}}, nil)
+	}
+	l.yield(Event{Kind: KindResult, Terminal: l.terminal}, nil)
 }
 
 func (l *loop) maxTokens() int {

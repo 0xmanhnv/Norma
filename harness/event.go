@@ -46,6 +46,7 @@ const (
 	ReasonHookStopped       TerminalReason = "hook_stopped"        // a tool/hook stopped continuation
 	ReasonMaxTurns          TerminalReason = "max_turns"           // hit MaxTurns
 	ReasonTimeout           TerminalReason = "timeout"             // hit a wall-clock run budget (host-imposed)
+	ReasonConsumerStopped   TerminalReason = "consumer_stopped"    // the caller stopped reading the event stream (OnExit only)
 )
 
 // ContinueReason names why the loop took another turn. These drive control
