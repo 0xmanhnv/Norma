@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -25,7 +26,7 @@ func acceptsRawInput(t tool.CoreTool) bool {
 // failures become error results. It is safe to call from the streaming
 // executor's goroutines (read-only access to loop config; permission/hook
 // callbacks are the host's responsibility to make safe).
-func (l *loop) execOne(use llm.ContentBlock, emitProgress func(tool.ProgressInfo)) (llm.ContentBlock, []llm.Message) {
+func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgress func(tool.ProgressInfo)) (llm.ContentBlock, []llm.Message) {
 	t, ok := l.in.Tools.Get(use.Name)
 	if !ok {
 		return llm.ToolResultText(use.ID, fmt.Sprintf("Error: unknown tool %q", use.Name), true), nil
@@ -95,10 +96,10 @@ func (l *loop) execOne(use llm.ContentBlock, emitProgress func(tool.ProgressInfo
 	// toolCtx carries the run's MaxDuration deadline, so a tool that overruns the
 	// wall-clock budget is interrupted here (the turn loop then enters wrap-up). During
 	// the wrap-up phase toolCtx is the live parent ctx, so settlement tools run freely.
-	callCtx := l.toolCtx
+	callCtx := toolCtx
 	var endSpan func(error, map[string]any)
 	if l.in.Tracer != nil {
-		callCtx, endSpan = l.in.Tracer.Start(l.toolCtx, "tool.call", map[string]any{"tool": use.Name, "tool_use_id": use.ID})
+		callCtx, endSpan = l.in.Tracer.Start(toolCtx, "tool.call", map[string]any{"tool": use.Name, "tool_use_id": use.ID})
 	}
 	res, err := t.Call(callCtx, input, tc)
 	if endSpan != nil {
