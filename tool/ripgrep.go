@@ -14,17 +14,17 @@ import (
 
 // Ripgrep integration: the Grep tool prefers the ripgrep binary when available
 // (faster, .gitignore-aware, full ripgrep syntax) and falls back to the pure-Go
-// implementation otherwise. Resolution runs once:
+// implementation otherwise. Resolution runs once: an `rg` already on PATH is
+// used as-is; otherwise the pure-Go grep is used, so search always works.
 //
-//  1. an `rg` already on PATH is used as-is;
-//  2. otherwise a best-effort `npm install -g @vscode/ripgrep` runs (npm is
-//     assumed present) and the installed binary is located;
-//  3. on any failure — no npm, install error, binary not found — the pure-Go
-//     grep is used, so search always works.
+// Nothing is installed unless the host asks for it. A search tool that reaches
+// the network and changes the machine on first use is a surprise in sandboxed
+// or egress-restricted deployments, so `npm install -g @vscode/ripgrep` runs
+// only through InstallRipgrep or with NORMA_RIPGREP_INSTALL=1.
 //
 // Env controls:
-//   - NORMA_DISABLE_RIPGREP=1     force the pure-Go implementation (also used by tests)
-//   - NORMA_RIPGREP_NO_INSTALL=1  use an existing rg but never auto-install
+//   - NORMA_DISABLE_RIPGREP=1  force the pure-Go implementation (also used by tests)
+//   - NORMA_RIPGREP_INSTALL=1  opt in to the npm install when rg is missing
 
 var (
 	rgOnce     sync.Once
@@ -42,19 +42,29 @@ func RipgrepPath() string {
 	return rgResolved
 }
 
-// EnsureRipgrep warms ripgrep resolution so the cost (including a possible npm
-// install) is paid at startup rather than on the first Grep call. Hosts may call
-// it once at boot. Returns the resolved path ("" = Go fallback).
+// EnsureRipgrep warms ripgrep resolution so the cost is paid at startup rather
+// than on the first Grep call. Hosts may call it once at boot. Returns the
+// resolved path ("" = Go fallback). It installs nothing unless
+// NORMA_RIPGREP_INSTALL=1 is set.
 func EnsureRipgrep() string { return RipgrepPath() }
+
+// InstallRipgrep runs `npm install -g @vscode/ripgrep` and returns the installed
+// binary ("" when npm is missing or the install fails). It is an explicit step
+// for hosts that want ripgrep and allow the install; call it before the first
+// Grep, since resolution is cached.
+func InstallRipgrep() string { return installRipgrep() }
+
+// installRipgrep is a variable so tests can prove resolution never calls it.
+var installRipgrep = installRipgrepViaNpm
 
 func resolveRipgrep() string {
 	if p, err := exec.LookPath("rg"); err == nil {
 		return p
 	}
-	if os.Getenv("NORMA_RIPGREP_NO_INSTALL") != "" {
-		return ""
+	if os.Getenv("NORMA_RIPGREP_INSTALL") == "1" {
+		return installRipgrep()
 	}
-	return installRipgrepViaNpm()
+	return ""
 }
 
 func installRipgrepViaNpm() string {
