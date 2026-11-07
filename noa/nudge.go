@@ -6,19 +6,35 @@ import (
 	"strings"
 )
 
+// maxGrowthWindowShare bounds the growth unit to a share of the window. The
+// absolute GrowthFloor is sized for a 200K window; on a 40K window it exceeds
+// the window itself, so the tier-1 growth nudge (pending >= unit) can never fire
+// and every nudge waits for the pressure band. A third-ish of the window keeps a
+// small window's efficiency band reachable while leaving a 128K window's unit
+// large enough for the count-based tier triggers to come into play.
+const maxGrowthWindowShare = 0.35
+
 // resolveAdaptiveGrowth is the growth unit the pacing is expressed in: a
-// fraction of the window, clamped into a band.
+// fraction of the window, clamped into a band. The band's floor is itself held
+// to maxGrowthWindowShare of the window, or a small window would get the same
+// constant as a large one and GrowthRatio would never matter.
 func resolveAdaptiveGrowth(limit int, n NudgeConfig) int {
 	if limit <= 0 {
 		return n.GrowthFloor
 	}
-	return min(n.GrowthCap, max(n.GrowthFloor, roundHalfUp(float64(limit)*n.GrowthRatio)))
+	floor := min(n.GrowthFloor, roundHalfUp(float64(limit)*maxGrowthWindowShare))
+	return min(n.GrowthCap, max(floor, roundHalfUp(float64(limit)*n.GrowthRatio)))
 }
 
 // growthFloorOf is the cadence gate: how much the context must grow before
 // another nudge is warranted.
+//
+// MinGrowthFloor is absolute too, so it is held to half the growth unit. Left
+// flat it is half of a 40K window, and since suppression lifts only after this
+// much growth, a session suppressed in the pressure band would overflow before
+// nudging could resume.
 func growthFloorOf(adaptive int, n NudgeConfig) int {
-	return max(n.MinGrowthFloor, int(n.MinGrowthRatio*float64(adaptive)))
+	return max(min(n.MinGrowthFloor, adaptive/2), int(n.MinGrowthRatio*float64(adaptive)))
 }
 
 // DecideNudgeInput is one turn's pressure picture.
