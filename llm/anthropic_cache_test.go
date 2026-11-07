@@ -131,3 +131,41 @@ func TestAnthropicCacheSkipsThinking(t *testing.T) {
 		t.Fatalf("got %s", b[0])
 	}
 }
+
+// With caching on, the last tool carries a breakpoint and the request as a whole
+// never exceeds four; with caching off no tool is marked.
+func TestAnthropicCacheMarksEndOfTools(t *testing.T) {
+	tools := []ToolSchema{{Name: "Bash", InputSchema: map[string]any{"type": "object"}}, {Name: "Read", InputSchema: map[string]any{"type": "object"}}}
+	msgs := []Message{
+		usr(TextBlock("task")),
+		asst(use("t1")),
+		usr(result("t1", "first")),
+		asst(use("t2")),
+		usr(result("t2", "second")),
+	}
+	marked := func(body []byte) []string {
+		var req struct {
+			Tools []map[string]any `json:"tools"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, tl := range req.Tools {
+			if _, ok := tl["cache_control"]; ok {
+				out = append(out, tl["name"].(string))
+			}
+		}
+		return out
+	}
+	body := buildFor(t, CompletionRequest{System: []string{"sys", "dynamic"}, DynamicBoundary: 1, Messages: msgs, Tools: tools})
+	if got := marked(body); len(got) != 1 || got[0] != "Read" {
+		t.Fatalf("marked tools %v, want [Read]", got)
+	}
+	if n := strings.Count(string(body), `"cache_control"`); n != 4 {
+		t.Fatalf("%d breakpoints, want 4 (tools, system, previous tail, tail)", n)
+	}
+	if got := marked(buildFor(t, CompletionRequest{System: []string{"sys"}, Messages: msgs, Tools: tools})); len(got) != 0 {
+		t.Fatalf("caching off marked tools %v", got)
+	}
+}

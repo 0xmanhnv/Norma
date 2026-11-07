@@ -43,9 +43,10 @@ type anthropicOutputConfig struct {
 }
 
 type anthropicTool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"input_schema"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"input_schema"`
+	CacheControl map[string]any `json:"cache_control,omitempty"`
 }
 
 func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byte, error) {
@@ -80,6 +81,14 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, anthropicTool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
 	}
+	// Tools render before the system prompt, so a breakpoint on the last tool
+	// caches the tool list on its own: a request whose system prompt differs
+	// (another role, an edited prompt) still reads the tools from the cache.
+	// With the system and the two message breakpoints that makes four, the most
+	// Anthropic accepts.
+	if req.DynamicBoundary > 0 && len(body.Tools) > 0 {
+		body.Tools[len(body.Tools)-1].CacheControl = map[string]any{"type": "ephemeral"}
+	}
 	if thinkingType != "" {
 		body.Thinking = &anthropicThinking{Type: thinkingType}
 	}
@@ -100,7 +109,8 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 //     it again guarantees the read, whatever the provider's lookback window.
 //
 // Thinking blocks can't carry a breakpoint; the mark moves to the block before.
-// Together with the system breakpoint this stays within Anthropic's limit of four.
+// Together with the tools and system breakpoints this stays within Anthropic's
+// limit of four.
 func anthropicMessages(msgs []Message, cache bool, volatile int) ([]json.RawMessage, error) {
 	type pos struct{ m, b int }
 	var marks []pos
