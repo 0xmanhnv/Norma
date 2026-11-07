@@ -806,12 +806,17 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 	if l.in.SystemReminder != "" {
 		msgs = append([]llm.Message{llm.UserText(l.in.SystemReminder)}, msgs...)
 	}
+	volatile := 0
 	if l.in.WorkingFrame != nil {
-		msgs = withWorkingFrame(msgs, l.in.WorkingFrame(l.ctx))
+		if frame := l.in.WorkingFrame(l.ctx); frame != "" {
+			msgs = withWorkingFrame(msgs, frame)
+			volatile = 1
+		}
 	}
 	req := llm.CompletionRequest{
 		System:          l.in.System,
 		DynamicBoundary: l.in.DynamicBoundary,
+		VolatileTail:    volatile,
 		Messages:        msgs,
 		Tools:           schemas,
 		MaxTokens:       l.maxTokens(),

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,7 +21,7 @@ type anthropicSystemBlock struct {
 type anthropicReq struct {
 	Model         string                 `json:"model"`
 	System        []anthropicSystemBlock `json:"system,omitempty"`
-	Messages      []Message              `json:"messages"`
+	Messages      []json.RawMessage      `json:"messages"`
 	Tools         []anthropicTool        `json:"tools,omitempty"`
 	MaxTokens     int                    `json:"max_tokens"`
 	Temperature   *float64               `json:"temperature,omitempty"`
@@ -62,9 +63,14 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 		thinkingType = req.Thinking
 		thinkingEnabled = req.Thinking == "enabled"
 	}
+	msgs, err := anthropicMessages(mergeAdjacentSameRole(filterThinkingBlocks(req.Messages, thinkingEnabled)),
+		req.DynamicBoundary > 0, req.VolatileTail)
+	if err != nil {
+		return nil, err
+	}
 	body := anthropicReq{
 		Model:         p.cfg.Model,
-		Messages:      mergeAdjacentSameRole(filterThinkingBlocks(req.Messages, thinkingEnabled)),
+		Messages:      msgs,
 		MaxTokens:     maxTok,
 		Temperature:   req.Temperature,
 		StopSequences: req.Stop,
@@ -81,6 +87,109 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 		body.OutputConfig = &anthropicOutputConfig{Effort: p.cfg.ReasoningEffort}
 	}
 	return json.Marshal(body)
+}
+
+// anthropicMessages encodes the conversation. With caching on (the host set a
+// DynamicBoundary) it also marks two breakpoints, so a long tool loop reads its
+// history from the cache instead of paying full price for it every turn:
+//
+//   - the tail: the last block before the volatile tail (working frame), i.e.
+//     everything this request adds that the next one will send again;
+//   - the previous tail: the end of the user message before the latest
+//     assistant turn, which is where the previous request put its tail. Marking
+//     it again guarantees the read, whatever the provider's lookback window.
+//
+// Thinking blocks can't carry a breakpoint; the mark moves to the block before.
+// Together with the system breakpoint this stays within Anthropic's limit of four.
+func anthropicMessages(msgs []Message, cache bool, volatile int) ([]json.RawMessage, error) {
+	type pos struct{ m, b int }
+	var marks []pos
+	if cache {
+		cacheable := func(p pos) bool {
+			t := msgs[p.m].Content[p.b].Type
+			return t != BlockThinking
+		}
+		// stableBefore walks back from the block before (m, b), skipping skip
+		// blocks and anything that can't carry a mark.
+		stableBefore := func(m, b, skip int) (pos, bool) {
+			for m >= 0 {
+				for b--; b >= 0; b-- {
+					p := pos{m, b}
+					if skip > 0 {
+						skip--
+						continue
+					}
+					if cacheable(p) {
+						return p, true
+					}
+				}
+				m--
+				if m >= 0 {
+					b = len(msgs[m].Content)
+				}
+			}
+			return pos{}, false
+		}
+		if n := len(msgs); n > 0 {
+			if p, ok := stableBefore(n-1, len(msgs[n-1].Content), volatile); ok {
+				marks = append(marks, p)
+			}
+			for a := n - 1; a > 0; a-- {
+				if msgs[a].Role == RoleAssistant {
+					if msgs[a-1].Role == RoleUser {
+						if p, ok := stableBefore(a-1, len(msgs[a-1].Content), 0); ok && (len(marks) == 0 || p != marks[0]) {
+							marks = append(marks, p)
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+	out := make([]json.RawMessage, len(msgs))
+	for i, m := range msgs {
+		b, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		var marked bool
+		for _, p := range marks {
+			marked = marked || p.m == i
+		}
+		if marked {
+			var raw struct {
+				Role    json.RawMessage   `json:"role"`
+				Content []json.RawMessage `json:"content"`
+			}
+			if err := json.Unmarshal(b, &raw); err != nil {
+				return nil, err
+			}
+			for _, p := range marks {
+				if p.m == i {
+					raw.Content[p.b] = withCacheControl(raw.Content[p.b])
+				}
+			}
+			if b, err = json.Marshal(raw); err != nil {
+				return nil, err
+			}
+		}
+		out[i] = b
+	}
+	return out, nil
+}
+
+// withCacheControl adds "cache_control":{"type":"ephemeral"} to an encoded block,
+// leaving its other bytes as they were.
+func withCacheControl(block json.RawMessage) json.RawMessage {
+	s := bytes.TrimSpace(block)
+	if len(s) < 2 || s[len(s)-1] != '}' {
+		return block
+	}
+	out := append([]byte{}, s[:len(s)-1]...)
+	if len(bytes.TrimSpace(s[1:len(s)-1])) > 0 {
+		out = append(out, ',')
+	}
+	return append(out, []byte(`"cache_control":{"type":"ephemeral"}}`)...)
 }
 
 // buildAnthropicSystem splits the system prompt at DynamicBoundary, placing a

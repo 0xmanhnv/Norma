@@ -26,6 +26,9 @@ func TestWorkingFrameIsFreshPerCallAndNeverStored(t *testing.T) {
 		last := req.Messages[len(req.Messages)-1]
 		b := last.Content[len(last.Content)-1]
 		seen = append(seen, b.Text)
+		if req.VolatileTail != 1 {
+			t.Errorf("the frame is volatile: VolatileTail = %d, want 1", req.VolatileTail)
+		}
 		if last.Role != llm.RoleUser {
 			t.Errorf("frame must ride on a user message, got %s", last.Role)
 		}

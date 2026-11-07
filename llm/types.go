@@ -177,11 +177,16 @@ type CompletionRequest struct {
 	// from per-request dynamic content; providers may set a cache breakpoint
 	// there (FR-02.2). 0 disables.
 	DynamicBoundary int
-	Messages        []Message
-	Tools           []ToolSchema
-	MaxTokens       int
-	Temperature     *float64
-	Stop            []string
+	// VolatileTail is how many content blocks at the very end of Messages change
+	// on every request (a working frame, a per-request reminder). Providers that
+	// cache the conversation place the cache breakpoint before them, since a
+	// prefix ending in content that is never sent again can never be read back.
+	VolatileTail int
+	Messages     []Message
+	Tools        []ToolSchema
+	MaxTokens    int
+	Temperature  *float64
+	Stop         []string
 	// Thinking overrides the provider's thinking mode for THIS request only:
 	// "" inherits Config.ThinkingType; "enabled"/"disabled" force that mode.
 	// Compaction's summary call sets "disabled" so the summarizer never spends
