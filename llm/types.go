@@ -182,11 +182,19 @@ type CompletionRequest struct {
 	// cache the conversation place the cache breakpoint before them, since a
 	// prefix ending in content that is never sent again can never be read back.
 	VolatileTail int
-	Messages     []Message
-	Tools        []ToolSchema
-	MaxTokens    int
-	Temperature  *float64
-	Stop         []string
+	// CacheTTL is how long a provider that takes a cache lifetime keeps the
+	// stable part of the prompt cached: the tool list and the static system
+	// prefix. "" keeps the provider's default (five minutes on Anthropic);
+	// "1h" asks for one hour, worth it when requests sharing that prefix
+	// start more than five minutes apart (a cache write costs more at one
+	// hour). The conversation breakpoints keep the default, since a longer
+	// lifetime may come before a shorter one but not after it.
+	CacheTTL    string
+	Messages    []Message
+	Tools       []ToolSchema
+	MaxTokens   int
+	Temperature *float64
+	Stop        []string
 	// Thinking overrides the provider's thinking mode for THIS request only:
 	// "" inherits Config.ThinkingType; "enabled"/"disabled" force that mode.
 	// Compaction's summary call sets "disabled" so the summarizer never spends

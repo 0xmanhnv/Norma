@@ -87,7 +87,7 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 	// With the system and the two message breakpoints that makes four, the most
 	// Anthropic accepts.
 	if req.DynamicBoundary > 0 && len(body.Tools) > 0 {
-		body.Tools[len(body.Tools)-1].CacheControl = map[string]any{"type": "ephemeral"}
+		body.Tools[len(body.Tools)-1].CacheControl = stableCacheControl(req)
 	}
 	if thinkingType != "" {
 		body.Thinking = &anthropicThinking{Type: thinkingType}
@@ -202,6 +202,18 @@ func withCacheControl(block json.RawMessage) json.RawMessage {
 	return append(out, []byte(`"cache_control":{"type":"ephemeral"}}`)...)
 }
 
+// stableCacheControl is the marker of the tools and system breakpoints: the
+// request's CacheTTL when it names one Anthropic takes, else the default. They
+// come before the message breakpoints, so a longer lifetime here is allowed.
+func stableCacheControl(req CompletionRequest) map[string]any {
+	cc := map[string]any{"type": "ephemeral"}
+	switch req.CacheTTL {
+	case "1h", "5m":
+		cc["ttl"] = req.CacheTTL
+	}
+	return cc
+}
+
 // buildAnthropicSystem splits the system prompt at DynamicBoundary, placing a
 // cache breakpoint on the static prefix (FR-02.2).
 func buildAnthropicSystem(req CompletionRequest) []anthropicSystemBlock {
@@ -216,10 +228,10 @@ func buildAnthropicSystem(req CompletionRequest) []anthropicSystemBlock {
 	if b >= len(req.System) {
 		// Boundary at/after the end → the whole system prompt is static; cache it
 		// all in one block (an all-static prompt should still be cacheable).
-		return []anthropicSystemBlock{{Type: "text", Text: joinSystem(req.System), CacheControl: map[string]any{"type": "ephemeral"}}}
+		return []anthropicSystemBlock{{Type: "text", Text: joinSystem(req.System), CacheControl: stableCacheControl(req)}}
 	}
 	return []anthropicSystemBlock{
-		{Type: "text", Text: joinSystem(req.System[:b]), CacheControl: map[string]any{"type": "ephemeral"}},
+		{Type: "text", Text: joinSystem(req.System[:b]), CacheControl: stableCacheControl(req)},
 		{Type: "text", Text: joinSystem(req.System[b:])},
 	}
 }
