@@ -268,3 +268,12 @@ func joinSystem(segs []string) string {
 	}
 	return strings.Join(parts, "\n\n")
 }
+
+// effort is the reasoning effort a request is sent with: its own override,
+// else the configured one.
+func (c Config) effort(req CompletionRequest) string {
+	if req.ReasoningEffort != "" {
+		return req.ReasoningEffort
+	}
+	return c.ReasoningEffort
+}

@@ -182,6 +182,11 @@ type CompletionRequest struct {
 	// cache the conversation place the cache breakpoint before them, since a
 	// prefix ending in content that is never sent again can never be read back.
 	VolatileTail int
+	// ReasoningEffort overrides Config.ReasoningEffort for THIS request when
+	// non-empty, so callers that share one provider can ask for more or less
+	// reasoning per call (a planner at "high", a summarizer at "low"). It is
+	// sent the same way as the configured value.
+	ReasoningEffort string
 	// CacheTTL is how long a provider that takes a cache lifetime keeps the
 	// stable part of the prompt cached: the tool list and the static system
 	// prefix. "" keeps the provider's default (five minutes on Anthropic);

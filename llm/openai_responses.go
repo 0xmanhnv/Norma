@@ -74,8 +74,8 @@ func (p *openaiResponsesProvider) buildBody(req CompletionRequest, stream bool) 
 	// reasoning.effort is the Responses equivalent of reasoning_effort. A
 	// per-request "disabled" (compaction's summary call) suppresses it; otherwise
 	// send it only when configured.
-	if req.Thinking != "disabled" && p.cfg.ReasoningEffort != "" {
-		body.Reasoning = &orReasoning{Effort: p.cfg.ReasoningEffort}
+	if effort := p.cfg.effort(req); req.Thinking != "disabled" && effort != "" {
+		body.Reasoning = &orReasoning{Effort: effort}
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, orTool{Type: "function", Name: t.Name, Description: t.Description, Parameters: t.InputSchema})
