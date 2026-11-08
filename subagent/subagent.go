@@ -168,6 +168,7 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		in.BashEnv = p.BashEnv
 		in.ToolOutputDir = p.ToolOutputDir
 		in.MaxToolOutputChars = p.MaxToolOutputChars
+		in.TaskOutputTailOnly = p.TaskOutputTailOnly
 		in.Tracer = p.Tracer
 		in.OnToolResult = p.OnToolResult
 		in.Settlement = p.Settlement

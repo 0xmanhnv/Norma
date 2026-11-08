@@ -61,6 +61,11 @@ type QueryInput struct {
 	// per-tool output budget (head size; 0 = default 30000). See tool.Capture.
 	ToolOutputDir      string
 	MaxToolOutputChars int
+	// TaskOutputTailOnly restores the old foreground-command result: only the
+	// last MaxToolOutputChars of the task's output, the rest dropped. By
+	// default, with ToolOutputDir set, the whole output goes through
+	// tool.Capture so it is spilled intact. See tool.ToolContext.
+	TaskOutputTailOnly bool
 
 	// Tasks, when non-nil, is the background-task manager shared with the tools.
 	// The loop drains its completion notifications into the conversation between

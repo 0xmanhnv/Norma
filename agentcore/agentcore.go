@@ -173,6 +173,10 @@ type Options struct {
 	// size fed to the model (0 = default 30000).
 	ToolOutputDir      string
 	MaxToolOutputChars int
+	// TaskOutputTailOnly makes a finished foreground command return only the
+	// tail of its output, as before full output was kept (see
+	// harness.QueryInput.TaskOutputTailOnly).
+	TaskOutputTailOnly bool
 
 	// BashEnv holds extra "KEY=VALUE" entries injected into the environment of
 	// Bash subprocesses (foreground + background), overriding inherited values.
@@ -559,6 +563,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		Todos:              s.opts.Todos,
 		ToolOutputDir:      s.opts.ToolOutputDir,
 		MaxToolOutputChars: s.opts.MaxToolOutputChars,
+		TaskOutputTailOnly: s.opts.TaskOutputTailOnly,
 		Tasks:              s.tasks,
 		BashEnv:            s.opts.BashEnv,
 		PermissionMode:     s.opts.PermissionMode,

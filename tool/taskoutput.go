@@ -63,6 +63,10 @@ func runTaskOutput(ctx context.Context, input json.RawMessage, tc *ToolContext) 
 	if err != nil {
 		return Errorf("Error: " + err.Error()), nil
 	}
+	if in.MaxBytes <= 0 && info.Status.Terminal() {
+		// A finished task's output no longer grows: hand Capture all of it.
+		out = taskOutputFor(tc, in.TaskID, out)
+	}
 	header := fmt.Sprintf("[task %s | %s", info.ID, info.Status)
 	if info.Status == TaskCompleted || info.Status == TaskFailed {
 		header += fmt.Sprintf(" | exit %d", info.ExitCode)
