@@ -16,6 +16,11 @@
 // add a boundary (MicroCompact tool-result clearing) stay ephemeral and
 // are not persisted. A separate Type=="boundary" record is written for
 // observability and is skipped during reconstruction.
+//
+// A Type=="rewind" record moves the conversation back to an earlier message
+// (Store.Rewind): reconstruction drops every message after RewindTo. Nothing
+// is deleted from the file, so the abandoned turns stay readable, and the next
+// resume continues from the rewound point.
 package transcript
 
 import (
@@ -41,10 +46,13 @@ type Record struct {
 	AgentID     string            `json:"agent_id,omitempty"`
 	IsSidechain bool              `json:"is_sidechain,omitempty"`
 	Timestamp   string            `json:"timestamp"`
-	Type        string            `json:"type"` // "message" | "boundary"
+	Type        string            `json:"type"` // "message" | "boundary" | "rewind"
 	Message     *llm.Message      `json:"message,omitempty"`
 	Usage       *llm.Usage        `json:"usage,omitempty"`    // assistant turns only
 	Boundary    *llm.BoundaryMeta `json:"boundary,omitempty"` // Type=="boundary"
+	// RewindTo is the UUID of the last message kept (Type=="rewind"); "" keeps
+	// none.
+	RewindTo string `json:"rewind_to,omitempty"`
 }
 
 // Store is a directory of session transcripts.
@@ -128,20 +136,81 @@ func (s *Store) Load(path string) ([]Record, error) {
 
 // Messages reconstructs the raw conversation and cumulative usage from records.
 // Boundary records are skipped — the working set is rebuilt by compaction on the
-// next turn, not replayed from disk.
+// next turn, not replayed from disk. Rewind records drop the messages after
+// their target; usage still counts every turn, since those tokens were spent.
 func Messages(recs []Record) ([]llm.Message, llm.Usage) {
-	var msgs []llm.Message
+	live := Live(recs)
+	msgs := make([]llm.Message, 0, len(live))
+	for _, r := range live {
+		msgs = append(msgs, *r.Message)
+	}
 	var total llm.Usage
 	for _, r := range recs {
-		if r.Type == "boundary" || r.Message == nil {
-			continue
-		}
-		msgs = append(msgs, *r.Message)
-		if r.Usage != nil {
+		if r.Type != "boundary" && r.Message != nil && r.Usage != nil {
 			total.Add(*r.Usage)
 		}
 	}
 	return msgs, total
+}
+
+// Live returns the message records that make up the conversation after every
+// rewind is applied, in order. A host uses their UUIDs to offer rewind points.
+func Live(recs []Record) []Record {
+	var live []Record
+	for _, r := range recs {
+		switch {
+		case r.Type == "rewind":
+			live = live[:rewindIndex(live, r.RewindTo)]
+		case r.Type == "boundary" || r.Message == nil:
+		default:
+			live = append(live, r)
+		}
+	}
+	return live
+}
+
+// rewindIndex is the number of live records a rewind to uuid keeps. A target
+// that is not live (written by hand, or already rewound past) keeps them all.
+func rewindIndex(live []Record, uuid string) int {
+	if uuid == "" {
+		return 0
+	}
+	for i := len(live) - 1; i >= 0; i-- {
+		if live[i].UUID == uuid {
+			return i + 1
+		}
+	}
+	return len(live)
+}
+
+// ErrNotLive is returned by Rewind for a target that is not a live message of
+// the session.
+var ErrNotLive = errors.New("transcript: rewind target is not a live message of the session")
+
+// Rewind moves a main session back so that toUUID is its last message ("" =
+// empty). It appends a rewind record and deletes nothing. Call it only while
+// no Writer is appending to the session: a running writer would chain its next
+// record after the old tail.
+func (s *Store) Rewind(sessionID, toUUID string) error {
+	path := s.MainPath(sessionID)
+	recs, err := s.Load(path)
+	if err != nil {
+		return err
+	}
+	if toUUID != "" {
+		live := Live(recs)
+		if rewindIndex(live, toUUID) == len(live) && (len(live) == 0 || live[len(live)-1].UUID != toUUID) {
+			return ErrNotLive
+		}
+	}
+	return s.Append(path, Record{
+		UUID:       newID(),
+		ParentUUID: LastUUID(recs),
+		SessionID:  sessionID,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		Type:       "rewind",
+		RewindTo:   toUUID,
+	})
 }
 
 // LastUUID returns the UUID of the last record, for continuing the parent chain.
