@@ -244,9 +244,10 @@ func TestProxyLikelyErr(t *testing.T) {
 	}
 }
 
-// TestWebFetchProxyFallback proves a proxied fetch that fails for a proxy-caused
-// reason (here: the proxy port is dead → connection refused) retries once directly
-// (no proxy) and reaches the target. A successful fetch is not annotated.
+// TestWebFetchProxyFallback proves that, with DirectFallback, a proxied fetch
+// that fails for a proxy-caused reason (here: the proxy port is dead →
+// connection refused) retries once directly (no proxy) and reaches the target.
+// A successful fetch is not annotated.
 func TestWebFetchProxyFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "text/html")
@@ -254,13 +255,32 @@ func TestWebFetchProxyFallback(t *testing.T) {
 	}))
 	defer srv.Close()
 	raw, _ := json.Marshal(map[string]any{"url": srv.URL})
-	res, err := NewWebFetch(WebFetchConfig{Proxy: "http://127.0.0.1:1"}).Call(context.Background(), raw, &ToolContext{})
+	res, err := NewWebFetch(WebFetchConfig{Proxy: "http://127.0.0.1:1", DirectFallback: true}).Call(context.Background(), raw, &ToolContext{})
 	if err != nil {
 		t.Fatalf("webfetch: %v", err)
 	}
 	out := res.Flatten()
 	if !strings.Contains(out, "Direct OK") {
 		t.Fatalf("direct fallback should have fetched the page: %q", out)
+	}
+}
+
+// TestWebFetchProxyNoFallbackByDefault proves a proxied fetch never goes out
+// directly unless DirectFallback is set: the proxy failure is the answer.
+func TestWebFetchProxyNoFallbackByDefault(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit = true
+		w.Write([]byte("reached directly"))
+	}))
+	defer srv.Close()
+	raw, _ := json.Marshal(map[string]any{"url": srv.URL})
+	res, err := NewWebFetch(WebFetchConfig{Proxy: "http://127.0.0.1:1"}).Call(context.Background(), raw, &ToolContext{})
+	if err != nil {
+		t.Fatalf("webfetch: %v", err)
+	}
+	if hit || !res.IsError {
+		t.Fatalf("a failed proxied fetch went out directly: %q", res.Flatten())
 	}
 }
 

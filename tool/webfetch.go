@@ -31,6 +31,11 @@ type WebFetchConfig struct {
 	// InsecureTLS skips TLS certificate verification entirely (equivalent to
 	// curl -k). A blunt fallback when no CA cert is available; prefer CACert.
 	InsecureTLS bool
+	// DirectFallback retries a proxied fetch once without the proxy when it
+	// failed for a proxy-caused reason (closed tunnel, failed CONNECT, TLS or
+	// HTTP/2 mismatch). Off by default: when the proxy is what enforces where
+	// requests may go, or records them, a direct retry would route around it.
+	DirectFallback bool
 }
 
 // NewWebFetch builds the WebFetch tool: fetches a URL over HTTP(S) and returns
@@ -160,9 +165,10 @@ func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *
 	// direct is the no-proxy fallback used when a proxied fetch fails for a
 	// proxy-caused reason (closed tunnel / failed CONNECT / TLS or HTTP2 mismatch):
 	// it bypasses the configured proxy so a recording/MITM hiccup doesn't fail an
-	// otherwise-reachable URL. nil when no proxy is configured (nothing to bypass).
+	// otherwise-reachable URL. nil unless DirectFallback is set and a proxy is
+	// configured.
 	var direct *http.Client
-	if cfg.Proxy != "" {
+	if cfg.Proxy != "" && cfg.DirectFallback {
 		direct = newFetchClient(WebFetchConfig{InsecureTLS: cfg.InsecureTLS})
 	}
 	return func(ctx context.Context, input json.RawMessage, _ *ToolContext) (Result, error) {
