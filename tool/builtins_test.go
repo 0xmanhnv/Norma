@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,9 +17,9 @@ import (
 func TestReadHardening(t *testing.T) {
 	dir := t.TempDir()
 
-	// Directory → error.
-	if r := run(t, NewRead(), dir, map[string]any{"file_path": "."}); !r.IsError {
-		t.Fatal("reading a directory should error")
+	// Directory → empty-directory note, not an error.
+	if r := run(t, NewRead(), dir, map[string]any{"file_path": "."}); r.IsError || !strings.Contains(r.Flatten(), "empty directory") {
+		t.Fatalf("reading an empty directory: %+v", r)
 	}
 	// Binary file → notice, not garbage.
 	os.WriteFile(filepath.Join(dir, "bin"), []byte{0x00, 0x01, 0x02, 'h', 'i'}, 0o644)
@@ -380,5 +381,31 @@ func TestBashEnvInjection(t *testing.T) {
 	out := res.Flatten()
 	if !strings.Contains(out, "proxy=http://127.0.0.1:8080") || !strings.Contains(out, "ca=/etc/ca.pem") {
 		t.Fatalf("env not injected/overridden: %q", out)
+	}
+}
+
+// Read on a directory lists it instead of failing: a note line, directories
+// first, file sizes, at most readDirMaxEntries entries.
+func TestReadDirectoryLists(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "out"), 0o755)
+	os.Mkdir(filepath.Join(dir, "out", "sub"), 0o755)
+	os.WriteFile(filepath.Join(dir, "out", "scan.json"), []byte("12345"), 0o644)
+	r := run(t, NewRead(), dir, map[string]any{"file_path": "out"})
+	got := r.Flatten()
+	if r.IsError {
+		t.Fatalf("directory read is an error: %s", got)
+	}
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "out is a directory (2 entries)") ||
+		lines[1] != "out/sub/" || lines[2] != "out/scan.json\t5 bytes" {
+		t.Fatalf("listing:\n%s", got)
+	}
+	for i := range readDirMaxEntries + 5 {
+		os.WriteFile(filepath.Join(dir, "out", fmt.Sprintf("f%03d", i)), nil, 0o644)
+	}
+	got = run(t, NewRead(), dir, map[string]any{"file_path": "out"}).Flatten()
+	if n := strings.Count(got, "\n"); n != readDirMaxEntries || !strings.Contains(got, fmt.Sprintf("first %d shown", readDirMaxEntries)) {
+		t.Fatalf("listing not bounded: %d lines\n%s", n, got)
 	}
 }
