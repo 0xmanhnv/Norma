@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -180,4 +181,54 @@ func appendRaw(path, line string) error {
 	defer f.Close()
 	_, err = f.WriteString(line)
 	return err
+}
+
+func TestRewind(t *testing.T) {
+	s := NewStore(t.TempDir())
+	w := s.NewWriter("sess", "")
+	w.RecordMessage(llm.UserText("a"), llm.Usage{})
+	w.RecordMessage(llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.TextBlock("b")}}, llm.Usage{InputTokens: 7})
+	w.RecordMessage(llm.UserText("c"), llm.Usage{})
+	w.RecordBoundary(llm.BoundaryMeta{Trigger: "auto"})
+	w.RecordMessage(llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.TextBlock("d")}}, llm.Usage{InputTokens: 5})
+	recs, _ := s.Load(s.MainPath("sess"))
+	keep := recs[1].UUID // "b"
+
+	if err := s.Rewind("sess", "no-such-uuid"); !errors.Is(err, ErrNotLive) {
+		t.Fatalf("unknown target: %v", err)
+	}
+	if err := s.Rewind("sess", keep); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ = s.Load(s.MainPath("sess"))
+	msgs, total := Messages(recs)
+	if len(msgs) != 2 || msgs[1].Text() != "b" {
+		t.Fatalf("after rewind: %+v", msgs)
+	}
+	// Spent tokens still count; nothing was deleted from the file.
+	if total.InputTokens != 12 || len(recs) != 6 || recs[5].Type != "rewind" || recs[5].ParentUUID != recs[4].UUID {
+		t.Fatalf("usage %+v, %d records", total, len(recs))
+	}
+	// A resumed writer continues after the rewind.
+	rw := s.ResumeWriter("sess", LastUUID(recs))
+	rw.RecordMessage(llm.UserText("e"), llm.Usage{})
+	recs, _ = s.Load(s.MainPath("sess"))
+	live := Live(recs)
+	if len(live) != 3 || live[2].Message.Text() != "e" {
+		t.Fatalf("after resume: %d live", len(live))
+	}
+	// A dropped message is no longer a valid target; a live one is, and "" empties.
+	if err := s.Rewind("sess", recs[2].UUID); !errors.Is(err, ErrNotLive) {
+		t.Fatalf("rewind to a dropped message: %v", err)
+	}
+	if err := s.Rewind("sess", live[2].UUID); err != nil {
+		t.Fatalf("rewind to the tail: %v", err)
+	}
+	if err := s.Rewind("sess", ""); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ = s.Load(s.MainPath("sess"))
+	if msgs, _ := Messages(recs); len(msgs) != 0 {
+		t.Fatalf("rewind to empty: %+v", msgs)
+	}
 }
