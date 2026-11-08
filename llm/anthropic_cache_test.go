@@ -169,3 +169,58 @@ func TestAnthropicCacheMarksEndOfTools(t *testing.T) {
 		t.Fatalf("caching off marked tools %v", got)
 	}
 }
+
+// CacheTTL sets the lifetime of the tools and system breakpoints only; the
+// conversation breakpoints keep the default, so every longer lifetime comes
+// before every shorter one, as Anthropic requires.
+func TestAnthropicCacheTTLOnStableBreakpoints(t *testing.T) {
+	tools := []ToolSchema{{Name: "Bash", InputSchema: map[string]any{"type": "object"}}, {Name: "Read", InputSchema: map[string]any{"type": "object"}}}
+	msgs := []Message{usr(TextBlock("task")), asst(use("t1")), usr(result("t1", "first")), asst(use("t2")), usr(result("t2", "second"))}
+	req := CompletionRequest{System: []string{"sys", "dynamic"}, DynamicBoundary: 1, Messages: msgs, Tools: tools}
+
+	body := string(buildFor(t, req))
+	if strings.Contains(body, `"ttl"`) {
+		t.Fatalf("default request carries a ttl: %s", body)
+	}
+	req.CacheTTL = "1h"
+	body = string(buildFor(t, req))
+	if n := strings.Count(body, `"cache_control"`); n != 4 {
+		t.Fatalf("%d breakpoints, want 4", n)
+	}
+	if n := strings.Count(body, `"ttl":"1h"`); n != 2 {
+		t.Fatalf("%d one-hour breakpoints, want 2 (tools, system): %s", n, body)
+	}
+	// Prompt order is tools, system, messages: the one-hour markers are on
+	// the first two, the conversation keeps the default.
+	var parsed struct {
+		Tools    []json.RawMessage `json:"tools"`
+		System   []json.RawMessage `json:"system"`
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(parsed.Tools[len(parsed.Tools)-1]), `"ttl":"1h"`) || !strings.Contains(string(parsed.System[0]), `"ttl":"1h"`) {
+		t.Fatal("tools or system breakpoint lacks the one-hour ttl")
+	}
+	for _, m := range parsed.Messages {
+		if strings.Contains(string(m), `"ttl"`) {
+			t.Fatalf("a conversation breakpoint carries a ttl: %s", m)
+		}
+	}
+	// The whole-static system prompt gets the lifetime too, and an unknown
+	// value is ignored rather than sent.
+	req.DynamicBoundary, req.System = 5, []string{"sys"}
+	if n := strings.Count(string(buildFor(t, req)), `"ttl":"1h"`); n != 2 {
+		t.Fatalf("all-static system: %d one-hour breakpoints", n)
+	}
+	req.CacheTTL = "forever"
+	if strings.Contains(string(buildFor(t, req)), `"ttl"`) {
+		t.Fatal("an unknown ttl was sent")
+	}
+	// Without caching (no boundary) nothing is marked whatever the ttl.
+	req.DynamicBoundary, req.CacheTTL = 0, "1h"
+	if strings.Contains(string(buildFor(t, req)), "cache_control") {
+		t.Fatal("ttl turned caching on")
+	}
+}
