@@ -342,7 +342,7 @@ func NewSession(opts Options) *Session {
 			s.unlock = tool.NewUnlockSet(opts.DeferredTools...)
 		}
 		s.registry.Add(tool.NewSearchExtraTools(s.registry, opts.DeferredTools))
-		s.registry.Add(tool.NewExecuteExtraTool(s.registry, s.unlock))
+		s.registry.Add(tool.NewExecuteExtraToolFor(s.registry, s.unlock, opts.DeferredTools))
 	}
 	if opts.Transcript != nil {
 		s.store = opts.Transcript
