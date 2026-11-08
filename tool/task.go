@@ -604,6 +604,40 @@ func (m *Manager) Output(id string, maxBytes int) (string, error) {
 	return tailFile(t.OutputPath, maxBytes)
 }
 
+// FullOutput returns a task's whole output file. The file is capped at
+// maxTaskOutputBytes while the task runs, so the read is bounded.
+func (m *Manager) FullOutput(id string) (string, error) {
+	m.mu.Lock()
+	t, ok := m.tasks[id]
+	m.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("unknown task %q", id)
+	}
+	f, err := os.Open(t.OutputPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxTaskOutputBytes+1<<20))
+	return string(b), err
+}
+
+// taskOutputFor is what a tool hands Capture for a task's output: the whole
+// file when the host keeps spilled output (OutputDir set) and has not asked
+// for the tail only, else the tail Output returns. Taking the whole file
+// means a command that printed more than the output budget keeps its first
+// part too, in the spill file, instead of losing everything before the last
+// MaxOutputChars. If the whole file cannot be read the tail is used.
+func taskOutputFor(tc *ToolContext, id string, tail string) string {
+	if tc == nil || tc.Tasks == nil || tc.OutputDir == "" || tc.TailOnly {
+		return tail
+	}
+	if full, err := tc.Tasks.FullOutput(id); err == nil {
+		return full
+	}
+	return tail
+}
+
 // DrainNotifications returns and clears the pending completion notifications.
 func (m *Manager) DrainNotifications() []Notification {
 	m.mu.Lock()

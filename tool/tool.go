@@ -31,6 +31,12 @@ type ToolContext struct {
 	// (full content preserved) instead of being discarded by truncation; the
 	// tool returns a head + a pointer to the file. Empty disables spilling.
 	OutputDir string
+	// TailOnly makes Bash and TaskOutput hand Capture only the last
+	// MaxOutputChars of a task's output file, the behaviour before whole
+	// outputs were kept. By default, when OutputDir is set, a finished task's
+	// whole output file (up to its 50 MiB cap) goes through Capture, so the
+	// spill keeps every byte instead of only the tail.
+	TailOnly bool
 	// Emit reports progress; may be nil. Safe to call from the tool goroutine.
 	Emit func(ProgressInfo)
 	// Tasks is the background-task manager for this session; may be nil (background

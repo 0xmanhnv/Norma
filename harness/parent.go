@@ -21,6 +21,7 @@ type ParentRun struct {
 	BashEnv            []string
 	ToolOutputDir      string
 	MaxToolOutputChars int
+	TaskOutputTailOnly bool
 	Tracer             Tracer
 	OnToolResult       func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
 	Settlement         *Settlement
@@ -62,6 +63,7 @@ func (l *loop) parentRun(mode permission.Mode) ParentRun {
 		BashEnv:            l.in.BashEnv,
 		ToolOutputDir:      l.in.ToolOutputDir,
 		MaxToolOutputChars: l.in.MaxToolOutputChars,
+		TaskOutputTailOnly: l.in.TaskOutputTailOnly,
 		Tracer:             l.in.Tracer,
 		OnToolResult:       l.in.OnToolResult,
 		Settlement:         l.in.Settlement,

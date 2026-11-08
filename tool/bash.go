@@ -124,6 +124,7 @@ func runBashManaged(ctx context.Context, tc *ToolContext, command string, timeou
 	}
 	if finished {
 		info, _ := tc.Tasks.Get(t.ID)
+		output = taskOutputFor(tc, t.ID, output) // before Forget removes the file
 		tc.Tasks.Forget(t.ID)
 		if info.Status == TaskFailed {
 			if strings.TrimSpace(output) == "" {
@@ -146,6 +147,7 @@ func runBashManaged(ctx context.Context, tc *ToolContext, command string, timeou
 	}
 	out, _ := tc.Tasks.Output(t.ID, 0)
 	tc.Tasks.Kill(t.ID)
+	out = taskOutputFor(tc, t.ID, out)
 	tc.Tasks.Forget(t.ID)
 	return Errorf(Capture(tc, out) + fmt.Sprintf("\n\n[command timed out after %s]", timeout)), nil
 }

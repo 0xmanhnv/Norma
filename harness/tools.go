@@ -93,6 +93,7 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 		Emit:           emitProgress,
 		OutputDir:      l.in.ToolOutputDir,
 		MaxOutputChars: l.in.MaxToolOutputChars,
+		TailOnly:       l.in.TaskOutputTailOnly,
 		Tasks:          l.in.Tasks,
 		Env:            l.in.BashEnv,
 	}
