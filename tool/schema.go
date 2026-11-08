@@ -3,6 +3,9 @@ package tool
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -32,7 +35,7 @@ func validateValue(schema map[string]any, v any, path string) error {
 			if typ == "" {
 				return nil
 			}
-			return fmt.Errorf("%s: expected object", at(path))
+			return wrongType(path, typ, v)
 		}
 		for _, req := range toStrings(schema["required"]) {
 			if _, present := m[req]; !present {
@@ -51,24 +54,24 @@ func validateValue(schema map[string]any, v any, path string) error {
 		}
 	case "string":
 		if _, ok := v.(string); !ok {
-			return fmt.Errorf("%s: expected string", at(path))
+			return wrongType(path, typ, v)
 		}
 	case "integer":
 		if f, ok := v.(float64); !ok || f != float64(int64(f)) {
-			return fmt.Errorf("%s: expected integer", at(path))
+			return wrongType(path, typ, v)
 		}
 	case "number":
 		if _, ok := v.(float64); !ok {
-			return fmt.Errorf("%s: expected number", at(path))
+			return wrongType(path, typ, v)
 		}
 	case "boolean":
 		if _, ok := v.(bool); !ok {
-			return fmt.Errorf("%s: expected boolean", at(path))
+			return wrongType(path, typ, v)
 		}
 	case "array":
 		arr, ok := v.([]any)
 		if !ok {
-			return fmt.Errorf("%s: expected array", at(path))
+			return wrongType(path, typ, v)
 		}
 		if items, ok := schema["items"].(map[string]any); ok {
 			for i, el := range arr {
@@ -107,4 +110,89 @@ func at(path string) string {
 		return "input"
 	}
 	return strings.TrimPrefix(path, ".")
+}
+
+// wrongType explains a type mismatch so the model can fix the call: the type
+// expected, what came instead, and the field with a corrected value built
+// from what was sent, e.g. `limit must be an integer, got string "20 rows":
+// use "limit": 20`. The leading "<path>: expected <type>" stays for callers
+// that match on it.
+func wrongType(path, want string, v any) error {
+	key := path
+	if i := strings.LastIndexAny(key, ".]"); i >= 0 && i+1 < len(key) {
+		key = key[i+1:]
+	}
+	field := ""
+	if key != "" && !strings.HasSuffix(path, "]") {
+		field = fmt.Sprintf("%q: ", key)
+	}
+	return fmt.Errorf("%s: expected %s, got %s: use %s%s", at(path), want, describe(v), field, example(want, v))
+}
+
+func describe(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return "null"
+	case string:
+		if r := []rune(t); len(r) > 40 {
+			t = string(r[:40]) + "…"
+		}
+		return fmt.Sprintf("string %q", t)
+	case float64:
+		return "number " + strconv.FormatFloat(t, 'f', -1, 64)
+	case bool:
+		return "boolean " + strconv.FormatBool(t)
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	}
+	return fmt.Sprintf("%T", v)
+}
+
+var reDigits = regexp.MustCompile(`-?\d+`)
+
+// example is a value of type want built from v where it can be.
+func example(want string, v any) string {
+	switch want {
+	case "integer":
+		switch t := v.(type) {
+		case float64:
+			return strconv.FormatInt(int64(math.Round(t)), 10) + " (a whole number)"
+		case string:
+			if d := reDigits.FindString(t); d != "" {
+				return d
+			}
+		}
+		return "1"
+	case "number":
+		if s, ok := v.(string); ok {
+			if d := reDigits.FindString(s); d != "" {
+				return d
+			}
+		}
+		return "1"
+	case "boolean":
+		if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "false") {
+			return "false"
+		}
+		return "true"
+	case "string":
+		b, _ := json.Marshal(fmt.Sprint(v))
+		if f, ok := v.(float64); ok {
+			b, _ = json.Marshal(strconv.FormatFloat(f, 'f', -1, 64))
+		}
+		return string(b)
+	case "array":
+		if _, ok := v.(string); ok {
+			return "[ ... ] (the JSON array itself, not a string holding it)"
+		}
+		return "[ ... ]"
+	case "object":
+		if _, ok := v.(string); ok {
+			return "{ ... } (the JSON object itself, not a string holding it)"
+		}
+		return "{ ... }"
+	}
+	return want
 }

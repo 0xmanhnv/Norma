@@ -42,7 +42,12 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	// arguments and would rather repair a malformed call than have it rejected
 	// here, where the only possible answer is a generic error. The schema is
 	// still advertised to the model either way — see tool.Spec.RawInput.
+	// Before the check, the common mistypings are repaired by the schema (a
+	// number or a JSON array sent as a string, see tool.CoerceInput); the
+	// repairs travel on the call's context so the host can count them.
+	var coerced []string
 	if !acceptsRawInput(t) {
+		input, coerced = tool.CoerceInput(t.InputSchema(), input)
 		if err := tool.ValidateInput(t.InputSchema(), input); err != nil {
 			return llm.ToolResultText(use.ID, "Error: invalid tool input: "+err.Error(), true), nil
 		}
@@ -100,10 +105,10 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	// toolCtx carries the run's MaxDuration deadline, so a tool that overruns the
 	// wall-clock budget is interrupted here (the turn loop then enters wrap-up). During
 	// the wrap-up phase toolCtx is the live parent ctx, so settlement tools run freely.
-	callCtx := context.WithValue(toolCtx, parentKey{}, l.parentRun(mode))
+	callCtx := tool.WithInputCoercions(context.WithValue(toolCtx, parentKey{}, l.parentRun(mode)), coerced)
 	var endSpan func(error, map[string]any)
 	if l.in.Tracer != nil {
-		callCtx, endSpan = l.in.Tracer.Start(toolCtx, "tool.call", map[string]any{"tool": use.Name, "tool_use_id": use.ID})
+		callCtx, endSpan = l.in.Tracer.Start(callCtx, "tool.call", map[string]any{"tool": use.Name, "tool_use_id": use.ID})
 	}
 	res, err := t.Call(callCtx, input, tc)
 	if endSpan != nil {
