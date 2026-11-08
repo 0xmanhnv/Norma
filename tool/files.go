@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -49,7 +50,9 @@ func runRead(_ context.Context, input json.RawMessage, tc *ToolContext) (Result,
 		return Errorf(fmt.Sprintf("Error reading %s: %v", in.FilePath, err)), nil
 	}
 	if info.IsDir() {
-		return Errorf(fmt.Sprintf("Error: %s is a directory, not a file. Use LS or Glob to list its contents.", in.FilePath)), nil
+		// Not an error: the model usually wants to see what is there, and an
+		// agent without LS or Glob would otherwise keep retrying the same call.
+		return Text(readDirListing(in.FilePath, path)), nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -89,6 +92,47 @@ func runRead(_ context.Context, input json.RawMessage, tc *ToolContext) (Result,
 		return Text("(no lines in the requested range)"), nil
 	}
 	return Text(readCapture(tc, b.String(), start)), nil
+}
+
+// readDirMaxEntries bounds the listing Read returns for a directory.
+const readDirMaxEntries = 50
+
+// readDirListing is Read's answer for a directory: one note line, then up to
+// readDirMaxEntries entries (directories first, then by name) with the size
+// of each file.
+func readDirListing(shown, path string) string {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Sprintf("%s is a directory and could not be listed: %v", shown, err)
+	}
+	if len(entries) == 0 {
+		return fmt.Sprintf("%s is an empty directory.", shown)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir() != entries[j].IsDir() {
+			return entries[i].IsDir()
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
+	n := min(len(entries), readDirMaxEntries)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s is a directory (%d entries", shown, len(entries))
+	if n < len(entries) {
+		fmt.Fprintf(&b, ", first %d shown", n)
+	}
+	b.WriteString("). Read takes a file: pass one of the paths below.\n")
+	for _, e := range entries[:n] {
+		if e.IsDir() {
+			fmt.Fprintf(&b, "%s/\n", filepath.Join(shown, e.Name()))
+			continue
+		}
+		size := int64(-1)
+		if fi, err := e.Info(); err == nil {
+			size = fi.Size()
+		}
+		fmt.Fprintf(&b, "%s\t%d bytes\n", filepath.Join(shown, e.Name()), size)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // readOutputBonus lifts the Read tool's output budget above the shared default
