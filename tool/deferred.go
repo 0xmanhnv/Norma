@@ -219,6 +219,20 @@ func NewSearchExtraTools(reg *Registry, deferred []string) CoreTool {
 // validated before the call. unlock may be nil (then every registry tool is
 // callable — no gating).
 func NewExecuteExtraTool(reg *Registry, unlock *UnlockSet) CoreTool {
+	return NewExecuteExtraToolFor(reg, unlock, nil)
+}
+
+// NewExecuteExtraToolFor is NewExecuteExtraTool knowing which tools are
+// deferred. A call for a tool that is in the session but not deferred (its
+// schema is already in the model's list) is answered with "call it directly"
+// rather than "load the skill first": nothing gates it, the model only took
+// the wrong path. It is not run from here, so hooks and permission rules
+// keyed on the tool's own name still see every call to it.
+func NewExecuteExtraToolFor(reg *Registry, unlock *UnlockSet, deferred []string) CoreTool {
+	isDeferred := map[string]bool{}
+	for _, n := range deferred {
+		isDeferred[n] = true
+	}
 	return Build(Spec{
 		Name: ExecuteExtraToolName,
 		Description: "Invoke a deferred tool discovered via " + SearchExtraToolsName +
@@ -253,7 +267,12 @@ func NewExecuteExtraTool(reg *Registry, unlock *UnlockSet) CoreTool {
 			}
 			t, ok := reg.Get(args.ToolName)
 			if !ok {
-				return Errorf("Error: unknown tool " + args.ToolName), nil
+				return Errorf(UnknownToolText(reg, args.ToolName)), nil
+			}
+			if args.ToolName == ExecuteExtraToolName || args.ToolName == SearchExtraToolsName ||
+				(unlock != nil && !unlock.Has(args.ToolName) && deferred != nil && !isDeferred[args.ToolName]) {
+				return Errorf(fmt.Sprintf("Error: %s is not a deferred tool: call %s directly with these params as its input, not through %s.",
+					args.ToolName, args.ToolName, ExecuteExtraToolName)), nil
 			}
 			if unlock != nil && !unlock.Has(args.ToolName) {
 				return Errorf("Error: tool " + args.ToolName +
@@ -269,4 +288,74 @@ func NewExecuteExtraTool(reg *Registry, unlock *UnlockSet) CoreTool {
 			return t.Call(ctx, params, tc)
 		},
 	})
+}
+
+// UnknownToolText is the error for a call to a tool the session lacks. When
+// one tool's name differs only by case or separators, or by a typo of at
+// most two letters, it names that tool; it never runs it, since hooks and
+// permission rules match on the name the model sent.
+func UnknownToolText(reg *Registry, name string) string {
+	msg := fmt.Sprintf("Error: unknown tool %q", name)
+	if s := closestToolName(reg, name); s != "" {
+		msg += fmt.Sprintf(". Did you mean %q?", s)
+	} else {
+		msg += ": it is not available to this agent; use one of the tools in your tool list"
+	}
+	return msg
+}
+
+func closestToolName(reg *Registry, name string) string {
+	if reg == nil {
+		return ""
+	}
+	norm := func(s string) string {
+		return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(s))
+	}
+	want := norm(name)
+	best, bestD, ties := "", 3, 0
+	for _, t := range reg.List() {
+		n := t.Name()
+		if norm(n) == want {
+			return n
+		}
+		if d := editDistance(norm(n), want, 3); d < bestD {
+			best, bestD, ties = n, d, 1
+		} else if d == bestD {
+			ties++
+		}
+	}
+	if ties != 1 || len(want) < 4 {
+		return ""
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance of a and b, or limit when it is
+// at least limit.
+func editDistance(a, b string, limit int) int {
+	if d := len(a) - len(b); d >= limit || -d >= limit {
+		return limit
+	}
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		rowMin := cur[0]
+		for j := 1; j <= len(b); j++ {
+			c := 1
+			if a[i-1] == b[j-1] {
+				c = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+c)
+			rowMin = min(rowMin, cur[j])
+		}
+		if rowMin >= limit {
+			return limit
+		}
+		prev, cur = cur, prev
+	}
+	return min(prev[len(b)], limit)
 }

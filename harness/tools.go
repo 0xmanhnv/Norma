@@ -3,7 +3,6 @@ package harness
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/0xmanhnv/norma/llm"
 	"github.com/0xmanhnv/norma/permission"
@@ -29,7 +28,7 @@ func acceptsRawInput(t tool.CoreTool) bool {
 func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgress func(tool.ProgressInfo)) (llm.ContentBlock, []llm.Message) {
 	t, ok := l.in.Tools.Get(use.Name)
 	if !ok {
-		return llm.ToolResultText(use.ID, fmt.Sprintf("Error: unknown tool %q", use.Name), true), nil
+		return llm.ToolResultText(use.ID, tool.UnknownToolText(l.in.Tools, use.Name), true), nil
 	}
 	input := use.Input
 	if msg := l.settleRefusal(use); msg != "" {
