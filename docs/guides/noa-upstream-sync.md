@@ -127,7 +127,7 @@ protected messages, which `ApplyCompression` excludes with a warning anyway.
 | `3738dc5`, `bd3f50b`, `b3f5cf0` | Compress schema portability (no top-level combinators; typed `anyOf` alternatives for strict schema validators). | `noa` omits `type` on `content` deliberately. | Low-medium. | Port later, with the line form. |
 | `8b8cab6` (10-03, v0.0.101) | Preserve `redacted_thinking` blocks across the round trip. | N/A — no such block type in `llm`. | — | Skip (N/A). |
 | `1eedab9`, `c89994c` (10-02, v0.0.100) | Opt-in language-preservation rule (default off; canonical constants unchanged). | No. | Low / small / low — needs a config flag threaded into every nudge voice. | Port later. The four rule constants are unchanged, so the compare test's pin stays. |
-| `83b8609` (10-02) | Widen refs to 9,999,999 with hybrid widths. | `noa` caps at m99999. | Medium for very long sessions. | Blocked: license term. |
+| `83b8609` (10-02, v0.0.100) | Widen refs to 9,999,999 with hybrid widths. | `noa` capped at m99999; past it new messages got no ref and could not be compressed. | Medium for very long sessions / small / low. | **Ported** (#25): `MaxRefIndex` 9,999,999; refs below 100,000 render byte-identically, above it they widen (m100000). `noaadapter`'s tag regexes accept the canonical widened form only. The protected-zone message sorts refs numerically. |
 | `afa1c54` (09-27, v0.0.98) | Salvage a single entry object (or an object holding a `ranges` array) in the `content` field instead of failing with content-not-array. | No. | Low-medium / tiny / low. | **Ported** (#24): `Diagnostics.ContentSalvage`. |
 | `ffc9fd9`, `e3436c2`, `b871e26`, `7b68d49`, `0e89c43` (v0.0.98) | Teach the one-string batch form (one plain string carrying every range as line-form blocks). | N/A — the form is line-form text. | — | Port later, with the line form. |
 | `7914887`, `5591bfd` (v0.0.99) | CCR retrieved originals ride back in the tool result. | N/A — no CCR store. | — | Skip. |
@@ -164,6 +164,13 @@ From #24 (v0.0.98+ fixes):
   summary}}` (and `{"content": {"ranges": [...]}}`) used to fail with
   content-not-array; it now compresses, and `Diagnostics.ContentSalvage` records it.
 
+From #25:
+
+- **Refs go past m99999.** `MaxRefIndex` is 9,999,999. Refs up to m99999 are unchanged
+  byte for byte, so existing sessions, persisted state and the prompt cache are
+  unaffected; message 100,000 and later get m100000 … instead of no ref. Code that
+  compares refs as strings must switch to `RefToIndex` — m100000 sorts before m99999.
+
 ## Sync log
 
 | PR | Scope |
@@ -173,6 +180,7 @@ From #24 (v0.0.98+ fixes):
 | #22 | `ParseCompressArgs` salvages single-quoted arguments and repairs control characters / invalid escapes at the decoder's error offset (`Diagnostics.QuoteSalvage`). Also corrects #20's `RawPrefix`: it is capped at 800 **bytes** again (as the fuzz invariant requires), cut at a character boundary. |
 | #23 | Accepted acp-kernel's post-v0.0.98 license term: README attribution, `THIRD-PARTY-LICENSES.md`, `CONTRIBUTING.md`. |
 | #24 | First v0.0.98+ fixes: nudge re-anchor on the shown reference (`a587c0c`), single-object `content` salvage (`afa1c54`), case-insensitive tool-name tests (`2cc21fa`). Tests in `noa/upstream_v098_test.go`. |
+| #25 | Ref capacity widened to 9,999,999 (`83b8609`). |
 
 `ProtectedLatestTools` deviates in one detail: upstream gives the latest instance a
 `BLOCKED` ref, as it does for hard-protected tools. `noa` leaves it addressable and

@@ -499,7 +499,7 @@ func buildBlock(req CompressRange, r ResolvedRange, state *CompressionState, in 
 		}
 	}
 	if len(hitProtected) > 0 {
-		sort.Strings(hitProtected)
+		sortRefsNumerically(hitProtected)
 		if len(direct) == 0 && len(consumedBlocks) == 0 {
 			return CompressionBlock{}, nil, warnings, surviving, fmt.Errorf(
 				"Range is entirely within the protected zone (the last %d messages and/or the most recent user message): %s. "+
@@ -689,6 +689,16 @@ func sortedByRef(set map[string]bool, refs MessageRefMap) []string {
 		return refIndexOf(out[a], refs) < refIndexOf(out[b], refs)
 	})
 	return out
+}
+
+// sortRefsNumerically orders refs by index. A string sort would put m100000
+// before m99999 once refs widen past five digits.
+func sortRefsNumerically(refs []string) {
+	sort.SliceStable(refs, func(a, b int) bool {
+		x, _ := RefToIndex(refs[a])
+		y, _ := RefToIndex(refs[b])
+		return x < y
+	})
 }
 
 func refIndexOf(id string, refs MessageRefMap) int {

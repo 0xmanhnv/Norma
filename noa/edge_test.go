@@ -84,28 +84,26 @@ func TestRefSpaceBoundaries(t *testing.T) {
 	if IndexToRef(MinRefIndex) != "m00001" {
 		t.Errorf("the lowest ref is %q", IndexToRef(MinRefIndex))
 	}
-	if IndexToRef(MaxRefIndex) != "m99999" {
+	if IndexToRef(MaxRefIndex) != "m9999999" {
 		t.Errorf("the highest ref is %q", IndexToRef(MaxRefIndex))
 	}
 	if r := IndexToRef(MaxRefIndex + 1); r != "" {
 		t.Errorf("IndexToRef past the ceiling = %q, want an empty string", r)
 	}
-	n, ok := RefToIndex("m99999")
+	n, ok := RefToIndex("m9999999")
 	if !ok || n != MaxRefIndex {
-		t.Errorf("RefToIndex(m99999) = %d,%v", n, ok)
+		t.Errorf("RefToIndex(m9999999) = %d,%v", n, ok)
 	}
-	if _, ok := RefToIndex("m100000"); ok {
-		t.Error("a six-digit ref was accepted")
+	if _, ok := RefToIndex("m10000000"); ok {
+		t.Error("a ref past the ceiling was accepted")
 	}
 }
 
 // Running out of refs must degrade, not corrupt: earlier messages keep theirs.
 func TestAssignRefsNearExhaustionKeepsExisting(t *testing.T) {
-	existing := MessageRefMap{ByRaw: map[string]string{}, ByRef: map[string]string{}}
-	for i := MinRefIndex; i < MaxRefIndex; i++ {
-		existing.ByRef[IndexToRef(i)] = "filler"
-	}
-	existing.ByRaw["old"] = "m00001"
+	// Allocation scans upward from NextIndex, so only the last slot matters;
+	// filling every lower ref would cost ten million map entries.
+	existing := MessageRefMap{ByRaw: map[string]string{"old": "m00001"}, ByRef: map[string]string{"m00001": "old"}}
 
 	res := AssignRefs([]CoreMessage{
 		msg("new1", RoleUser, CTText, "a"),

@@ -1,13 +1,14 @@
 package noa
 
 // Regression tests for fixes ported from acp-kernel v0.0.98 and later, adapted
-// from tests/nudge.test.ts (#478), tests/protect-recent.test.ts (#1725) and
-// tests/parse-compress-input.test.ts (#470). acp-kernel is MIT plus an
-// Additional Term from v0.0.98 (Copyright (c) 2026 ranxianglei); see
-// THIRD-PARTY-LICENSES.md.
+// from tests/nudge.test.ts (#478), tests/protect-recent.test.ts (#1725),
+// tests/parse-compress-input.test.ts (#470) and tests/refs.test.ts (#483).
+// acp-kernel is MIT plus an Additional Term from v0.0.98 (Copyright (c) 2026
+// ranxianglei); see THIRD-PARTY-LICENSES.md.
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -267,5 +268,105 @@ func TestParseCanonicalArrayIsNotMarkedContentSalvage(t *testing.T) {
 	r := parse(`{"content":[{"startRef":"m00001","endRef":"m00002","summary":"clean"}]}`)
 	if r.Diagnostics.Kind != ParseOK || r.Diagnostics.ContentSalvage || len(r.Ranges) != 1 {
 		t.Fatalf("result = %+v", r)
+	}
+}
+
+// --- Ref capacity widened to 9,999,999 (83b8609, acp-kernel#483) ---------
+
+// Below 100,000 refs render byte-identically (five digits, zero-padded); above
+// it they widen naturally, never with a leading zero.
+func TestIndexToRefWidensPastOldCap(t *testing.T) {
+	cases := map[int]string{
+		99999: "m99999", 100000: "m100000", 123456: "m123456", 9_999_999: "m9999999",
+		10_000_000: "",
+	}
+	for in, want := range cases {
+		if got := IndexToRef(in); got != want {
+			t.Errorf("IndexToRef(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRefToIndexAcceptsBothWidths(t *testing.T) {
+	ok := map[string]int{"m100000": 100000, "m0000001": 1, "m9999999": 9_999_999, "m0100000": 100000}
+	for in, want := range ok {
+		if got, valid := RefToIndex(in); !valid || got != want {
+			t.Errorf("RefToIndex(%q) = %d,%v, want %d,true", in, got, valid, want)
+		}
+	}
+	for _, in := range []string{"m10000000", "m12345678"} {
+		if got, valid := RefToIndex(in); valid {
+			t.Errorf("RefToIndex(%q) = %d,true, want invalid (over the cap)", in, got)
+		}
+	}
+}
+
+func TestAssignRefsCrossesOldCap(t *testing.T) {
+	existing := MessageRefMap{
+		ByRaw: map[string]string{"raw-99999": "m99999"},
+		ByRef: map[string]string{"m99999": "raw-99999"},
+	}
+	res := AssignRefs([]CoreMessage{
+		msg("new1", RoleUser, CTText, "a"),
+		msg("new2", RoleUser, CTText, "b"),
+	}, AssignRefsOptions{Existing: existing, NextIndex: 99999})
+	if res.Map.ByRaw["new1"] != "m100000" || res.Map.ByRaw["new2"] != "m100001" {
+		t.Fatalf("refs = %v, want m100000 and m100001", res.Map.ByRaw)
+	}
+	if res.NextIndex != 100002 || res.NewlyAssigned != 2 {
+		t.Fatalf("next=%d assigned=%d", res.NextIndex, res.NewlyAssigned)
+	}
+	if HighestUsedIndex(res.Map) != 100001 {
+		t.Fatalf("HighestUsedIndex = %d, want 100001", HighestUsedIndex(res.Map))
+	}
+}
+
+func TestParseBoundaryAcceptsWidenedRefs(t *testing.T) {
+	for in, want := range map[string]int{"m100000": 100000, "m9999999": 9_999_999, "m00001": 1, "m1": 1} {
+		ref, ok := ParseBoundary(in)
+		if !ok || ref.kind != BoundaryMessage || ref.num != want || ref.raw != IndexToRef(want) {
+			t.Errorf("ParseBoundary(%q) = %+v,%v", in, ref, ok)
+		}
+	}
+	if ref, ok := ParseBoundary("m10000000"); ok && ref.kind == BoundaryMessage {
+		t.Errorf("ParseBoundary(m10000000) = %+v, want no message ref over the cap", ref)
+	}
+	if ref, ok := ParseBoundary("b3"); !ok || ref.kind != BoundaryBlock {
+		t.Errorf("block refs must be unaffected: %+v,%v", ref, ok)
+	}
+}
+
+// m999999 used to be the out-of-range sentinel; it is a valid ref now, and the
+// cap moved to 9,999,999. A widened ref resolves like any other.
+func TestResolveBoundariesWidenedRefs(t *testing.T) {
+	msgs := []CoreMessage{
+		msg("u0", RoleUser, CTText, "task"),
+		msg("a1", RoleAssistant, CTText, "x"),
+		msg("a2", RoleAssistant, CTText, "y"),
+	}
+	st := CreateInitialState("s", "/a")
+	st.MessageRefs = AssignRefs(msgs, AssignRefsOptions{Existing: st.MessageRefs, NextIndex: 99999}).Map
+	if st.MessageRefs.ByRaw["a1"] != "m100000" {
+		t.Fatalf("refs = %v", st.MessageRefs.ByRaw)
+	}
+	rr, err := ResolveBoundaries("m100000", "m0100001", msgs, st)
+	if err != nil || rr.StartIndex != 1 || rr.EndIndex != 2 {
+		t.Fatalf("resolved = %+v, err = %v", rr, err)
+	}
+	if _, err := ResolveBoundaries("m10000000", "m100001", msgs, st); err == nil || err.Kind != NotFoundInvalid {
+		t.Fatalf("a ref over the cap must be invalid, got %v", err)
+	}
+	if _, err := ResolveBoundaries("m999999", "m100001", msgs, st); err == nil || err.Kind != NotFoundUnknown {
+		t.Fatalf("m999999 is a well-formed ref now, just not assigned: got %v", err)
+	}
+}
+
+// The protected-zone error lists refs in numeric order across the old cap,
+// not lexicographic order (m100000 sorts before m99999 as a string).
+func TestSortRefsNumericallyAcrossWidths(t *testing.T) {
+	refs := []string{"m100000", "m99999", "m00002"}
+	sortRefsNumerically(refs)
+	if want := []string{"m00002", "m99999", "m100000"}; !slices.Equal(refs, want) {
+		t.Fatalf("sorted = %v, want %v", refs, want)
 	}
 }

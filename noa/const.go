@@ -1,11 +1,17 @@
 package noa
 
 const (
-	// RefWidth is the zero-padded width of a message ref: m00001 .. m99999.
-	// Padding keeps lexicographic order equal to numeric order.
+	// RefWidth is the zero-padding FLOOR of a message ref, not a fixed width:
+	// m00001 .. m99999 render five digits, and above that refs widen naturally
+	// (m100000 .. m9999999), so every ref issued below the old cap is
+	// byte-identical while the ceiling lifts. Compare refs by RefToIndex, never
+	// as strings: "m100000" sorts before "m99999".
+	//
+	// Ported from acp-kernel (MIT plus Additional Term, Copyright (c) 2026
+	// ranxianglei): src/refs.ts — 83b8609 (v0.0.100, acp-kernel#483).
 	RefWidth    = 5
 	MinRefIndex = 1
-	MaxRefIndex = 99999
+	MaxRefIndex = 9_999_999
 	// BlockedRef marks a message that is hard-protected: it gets an entry in
 	// ByRaw so it is not revisited, but consumes no ref number and can never be
 	// addressed by the model.

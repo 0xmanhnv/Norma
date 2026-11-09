@@ -7,7 +7,7 @@ func msg(id string, role Role, ct ContentType, text string) CoreMessage {
 }
 
 func TestIndexToRef(t *testing.T) {
-	cases := map[int]string{1: "m00001", 42: "m00042", 99999: "m99999", 0: "", 100000: "", -1: ""}
+	cases := map[int]string{1: "m00001", 42: "m00042", 99999: "m99999", 100000: "m100000", 0: "", 10_000_000: "", -1: ""}
 	for in, want := range cases {
 		if got := IndexToRef(in); got != want {
 			t.Errorf("IndexToRef(%d) = %q, want %q", in, got, want)
@@ -27,7 +27,7 @@ func TestRefToIndex(t *testing.T) {
 			t.Errorf("RefToIndex(%q) = %d,%v, want %d,true", in, got, valid, want)
 		}
 	}
-	for _, in := range []string{"", "m", "m0", "m00000", "b5", "00001", "m123456", "mm1", "m1x"} {
+	for _, in := range []string{"", "m", "m0", "m00000", "b5", "00001", "m12345678", "mm1", "m1x"} {
 		if got, valid := RefToIndex(in); valid {
 			t.Errorf("RefToIndex(%q) = %d,true, want invalid", in, got)
 		}
@@ -158,11 +158,9 @@ func TestHighestUsedIndexIgnoresBlocked(t *testing.T) {
 
 // Running out of ref space must stop cleanly, not corrupt the map.
 func TestAssignRefsExhaustion(t *testing.T) {
-	existing := MessageRefMap{ByRaw: map[string]string{}, ByRef: map[string]string{}}
-	for i := MinRefIndex; i <= MaxRefIndex; i++ {
-		ref := IndexToRef(i)
-		existing.ByRef[ref] = "filler"
-	}
+	// Allocation scans upward from NextIndex, so filling the last slot
+	// exhausts the space for this call.
+	existing := MessageRefMap{ByRaw: map[string]string{}, ByRef: map[string]string{IndexToRef(MaxRefIndex): "filler"}}
 	res := AssignRefs([]CoreMessage{msg("late", RoleUser, CTText, "x")},
 		AssignRefsOptions{Existing: existing, NextIndex: MaxRefIndex})
 	if _, ok := res.Map.ByRaw["late"]; ok {
