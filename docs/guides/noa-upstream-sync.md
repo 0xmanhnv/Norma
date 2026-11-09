@@ -46,12 +46,14 @@ software must attribute acp-kernel, with a link to the repository, on its home p
 in its documentation, or on an About/Credits page. Purely server-side or embedded use
 satisfies the term through its shipped documentation.
 
-Because that is a licensing question for the owner, **this sync ports nothing from
-v0.0.98 or later.** Every "port now" item below comes from v0.0.97 or earlier, which
-was plain MIT. Changes after v0.0.97 are listed with the decision
-"blocked: license term". Norma already names acp-kernel in `README.md` and
-`THIRD-PARTY-LICENSES.md`; adding the repository link there would likely satisfy the
-term, but whether to accept it is the owner's call.
+The first sync (#20–#22) ported nothing from v0.0.98 or later and marked those changes
+"blocked: license term" until the owner decided. **The owner has accepted the term**
+(#23): the README's Acknowledgements now state that `noa` / `noaadapter` use code from
+acp-kernel and billion-context, with both links, and `THIRD-PARTY-LICENSES.md` carries
+the post-v0.0.98 license text (MIT plus the Additional Term) next to the original MIT
+notice, plus a downstream note: a user-facing product that ships this package must
+show the same attribution in its documentation or on an About/Credits page. Code
+ported from v0.0.98 or later is listed under the post-v0.0.98 license in that file.
 
 ## Changes since the baseline
 

@@ -17,6 +17,11 @@ Norma is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/nor
   own license (e.g. `noa` / `noaadapter`, ported from acp-kernel under the MIT License).
   Keep their in-source attribution comments intact, and if you add or extend such code,
   record it in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+- When porting from acp-kernel, keep its notices: the in-source "Ported from
+  acp-kernel" comment, the path list in `THIRD-PARTY-LICENSES.md` (under the
+  post-v0.0.98 license when the change comes from v0.0.98 or later), and the
+  acp-kernel / billion-context attribution with links in the README's Acknowledgements.
+  That attribution is a license condition from v0.0.98 on, so never drop it.
 
 ## Prerequisites
 
