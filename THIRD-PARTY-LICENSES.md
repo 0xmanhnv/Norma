@@ -28,6 +28,10 @@ for the per-change record. The synced paths, with the upstream file each derives
   (`src/nudge-text.ts`).
 - `noa/compress.go`, `noa/boundaries.go` — gate diagnostics, covering-block naming,
   reversed-ref notes (`src/compress.ts`, `src/boundaries.ts`).
+- `noa/protected.go`, `noa/config.go` — `IsNeverPreserveRecent`, the
+  `NeverPreserveRecentTools` / `PreserveRecentTools` / `ProtectedLatestTools` knobs
+  (`src/protected.ts`, `src/types.ts`); tests in `noa/protection_knobs_test.go`
+  adapted from `tests/protected-latest.test.ts`.
 - `noa/prompts_rules.go` — the rule constants, synced to v0.0.97
   (`src/compression-rules.ts`).
 - `noa/upstream_sync_test.go` — regression tests adapted from acp-kernel's

@@ -36,7 +36,7 @@ func ComputeProtectedRefs(msgs []CoreMessage, state CompressionState, cfg Config
 		// Bulky, inherently re-obtainable output does not occupy a slot in the
 		// recency window — otherwise a single large Read would push everything
 		// else out of protection. It stays fully compressible either way.
-		if IsNeverPreserveRecentTool(m) {
+		if IsNeverPreserveRecent(m, cfg) {
 			continue
 		}
 		visible = append(visible, visibleMsg{ref: ref, tokens: DefaultCountTokens(m.Text), isUser: m.Role == RoleUser})

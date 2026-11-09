@@ -146,3 +146,15 @@ protected messages, which `ApplyCompression` excludes with a warning anyway.
   behaviour.
 
 No configuration default changed.
+
+## Sync log
+
+| PR | Scope |
+|---|---|
+| #20 | Bug fixes and rules sync (first table above), this document, `NOA_UPSTREAM_DIR`. |
+| #21 | `Config.NeverPreserveRecentTools`, `Config.PreserveRecentTools`, `Config.ProtectedLatestTools`. All default to the previous behaviour. |
+
+`ProtectedLatestTools` deviates in one detail: upstream gives the latest instance a
+`BLOCKED` ref, as it does for hard-protected tools. `noa` leaves it addressable and
+protects it at recommendation and compression time instead, so once a newer instance
+supersedes it, it is an ordinary compressible message with a ref the model can name.

@@ -75,6 +75,29 @@ type Config struct {
 	// IsToolProtected, when set, extends ProtectedTools with a host predicate.
 	IsToolProtected func(toolName string) bool
 
+	// ProtectedLatestTools protects only the NEWEST instance of each matching
+	// tool: its last call and that call's result. Older instances stay
+	// compressible. Meant for cumulative-snapshot tools (a todo list, a plan)
+	// whose newest result is the whole truth and every older one is redundant.
+	// ProtectedTools would keep every instance forever; the recent zone would
+	// lose the newest one once it ages out. Patterns as in ProtectedTools.
+	ProtectedLatestTools []string
+
+	// NeverPreserveRecentTools replaces the built-in list of tools that take no
+	// slot in the recent protected zone (see the package variable of the same
+	// name). nil keeps the built-in list; a non-nil slice — including an empty
+	// one — replaces it verbatim, so []string{} lets every recent tool result
+	// keep its zone protection. Patterns as in ProtectedTools.
+	NeverPreserveRecentTools []string
+
+	// PreserveRecentTools is subtracted from the effective never-preserve list:
+	// the tools named here DO keep recent-zone protection. It is the positive
+	// knob — "protect fresh Read results" is []string{"Read"} — without
+	// restating the rest of the list. The usual reason is a fold-then-re-read
+	// loop: a file read for the current step is folded at once, and the model
+	// reads it again. Each pattern is matched against the list's entries.
+	PreserveRecentTools []string
+
 	// PreserveRecentMessages and PreserveRecentTokens define the soft protected
 	// zone at the tail of the conversation.
 	PreserveRecentMessages int
