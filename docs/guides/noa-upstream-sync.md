@@ -59,7 +59,8 @@ ported from v0.0.98 or later is listed under the post-v0.0.98 license in that fi
 
 Legend for **Decision**: *port now* (done in this sync), *port later* (worth having,
 not urgent or larger than one PR), *skip* (host/UI-specific, TypeScript-ecosystem,
-or not applicable to a Go pure core), *blocked* (after v0.0.97; see Licensing).
+or not applicable to a Go pure core), *blocked* (after v0.0.97; held until the
+license term was accepted in #23, then re-decided — see the sync log).
 **noa had it?** says whether `noa` already had an equivalent before this sync.
 
 ### Bug fixes to logic `noa` already ported (highest priority)
@@ -85,10 +86,10 @@ or not applicable to a Go pure core), *blocked* (after v0.0.97; see Licensing).
 | `15cad27` (09-20) | Plain ranges skip live host checkpoint carriers. | N/A — `noa` summaries are synthetic, not host messages. | — | Skip. |
 | `8a9ffbd`, `cbc78fb` (09-09) | Parse tag-prefixed / stringified Compress call text; stub live summaries. | Yes. Upstream also drops consumed sibling entries of a partly-live batch; `noa` only stubs them (≤200 chars). | Low. | Port later (small token saving). |
 | `ab9c229`, `f8a8885` (09-27) | Re-mint live ids that collide with a folded copy. | N/A — the occurrence counter already gives a repeated message its own id. | — | Skip. |
-| `a587c0c` (09-28) | Re-anchor nudge cadence when the count drops below the shown reference. | No. | Medium / small / low. | Blocked: license term. |
-| `2cc21fa` (09-30) | Case-insensitive protected tool names. | Configured patterns already are; the always-protected list is exact-match on Norma's own name. | Low. | Blocked: license term. |
+| `a587c0c` (09-28, v0.0.99) | Re-anchor nudge cadence when the count drops below the shown reference. | No. | Medium / small / low. | **Ported** (#24): `stampNudge` re-anchors when the count falls a full growth step below `LastNudgeShownTokens` as well as below the baseline. |
+| `2cc21fa` (09-30, v0.0.100) | Case-insensitive protected tool names. | Yes — `MatchToolPattern` already lowercased both sides, so every knob built on it (`ProtectedTools`, `ProtectedLatestTools`, the recent-zone lists) matched across casings. | Low. | **Tests ported** (#24); no code change. `AlwaysProtectedTools` stays an exact match on Norma's `Compress`, as upstream's always-protected list does. |
 | `78df864` (10-02) | Build prune/recommend indexes once per turn (performance). | No. | Low-medium. | Blocked: license term. |
-| `79f1cba` (09-29) | Linear-time line-form split. | N/A (no line form yet). | — | Blocked: license term. |
+| `79f1cba` (09-29, v0.0.99) | Linear-time line-form split. | N/A (no line form yet). | — | Port later, with the line form. |
 
 **Deviation from `6996cf6`.** Upstream closes a batch at any positional gap, which
 includes soft- and hard-protected messages. Ported literally this starved `noa`:
@@ -124,10 +125,13 @@ protected messages, which `ApplyCompression` excludes with a warning anyway.
 | `f3df3eb` (09-25) | Fence async persistence commits. | N/A — `noaadapter` writes synchronously under a mutex. | — | Skip. |
 | `a2ee01c`, `ee3d4f1`, `6775cb4`, `40c1f9d` | Wire codecs (Gemini, blank `reasoning_content`, tool-name backfill, malformed bodies). | N/A — `noaadapter` projects `llm.Message` and recovers tool names itself. | — | Skip. |
 | `3738dc5`, `bd3f50b`, `b3f5cf0` | Compress schema portability (no top-level combinators; typed `anyOf` alternatives for strict schema validators). | `noa` omits `type` on `content` deliberately. | Low-medium. | Port later, with the line form. |
-| `8b8cab6` (10-03) | Preserve `redacted_thinking` blocks across the round trip. | N/A — no such block type in `llm`. | — | Blocked: license term (and N/A). |
-| `1eedab9`, `c89994c` (10-02) | Opt-in language-preservation rule (default off; canonical constants unchanged). | No. | Low. | Blocked: license term. |
+| `8b8cab6` (10-03, v0.0.101) | Preserve `redacted_thinking` blocks across the round trip. | N/A — no such block type in `llm`. | — | Skip (N/A). |
+| `1eedab9`, `c89994c` (10-02, v0.0.100) | Opt-in language-preservation rule (default off; canonical constants unchanged). | No. | Low / small / low — needs a config flag threaded into every nudge voice. | Port later. The four rule constants are unchanged, so the compare test's pin stays. |
 | `83b8609` (10-02) | Widen refs to 9,999,999 with hybrid widths. | `noa` caps at m99999. | Medium for very long sessions. | Blocked: license term. |
-| `afa1c54`, `ffc9fd9`, `e3436c2`, `b871e26`, `7b68d49` | Single-entry object salvage; teach the one-string batch form. | No. | Low. | Blocked: license term. |
+| `afa1c54` (09-27, v0.0.98) | Salvage a single entry object (or an object holding a `ranges` array) in the `content` field instead of failing with content-not-array. | No. | Low-medium / tiny / low. | **Ported** (#24): `Diagnostics.ContentSalvage`. |
+| `ffc9fd9`, `e3436c2`, `b871e26`, `7b68d49`, `0e89c43` (v0.0.98) | Teach the one-string batch form (one plain string carrying every range as line-form blocks). | N/A — the form is line-form text. | — | Port later, with the line form. |
+| `7914887`, `5591bfd` (v0.0.99) | CCR retrieved originals ride back in the tool result. | N/A — no CCR store. | — | Skip. |
+| `3d88e6e` (v0.0.99) | Release workflow input hardening. | N/A — upstream CI. | — | Skip. |
 
 ## What changed for `noa` users
 
@@ -149,6 +153,17 @@ protected messages, which `ApplyCompression` excludes with a warning anyway.
 
 No configuration default changed.
 
+From #24 (v0.0.98+ fixes):
+
+- **The nudge cadence recovers from an overestimated count.** If a nudge was shown at
+  a count that later settles a full growth step lower, the cadence re-anchors there
+  instead of staying silent until the context regrows past the old level. Growth-gated
+  nudges can therefore resume sooner after such a drop; the pressure band was never
+  affected.
+- **`content` given as a single object is accepted.** `{"content": {startId, endId,
+  summary}}` (and `{"content": {"ranges": [...]}}`) used to fail with
+  content-not-array; it now compresses, and `Diagnostics.ContentSalvage` records it.
+
 ## Sync log
 
 | PR | Scope |
@@ -156,6 +171,8 @@ No configuration default changed.
 | #20 | Bug fixes and rules sync (first table above), this document, `NOA_UPSTREAM_DIR`. |
 | #21 | `Config.NeverPreserveRecentTools`, `Config.PreserveRecentTools`, `Config.ProtectedLatestTools`. All default to the previous behaviour. |
 | #22 | `ParseCompressArgs` salvages single-quoted arguments and repairs control characters / invalid escapes at the decoder's error offset (`Diagnostics.QuoteSalvage`). Also corrects #20's `RawPrefix`: it is capped at 800 **bytes** again (as the fuzz invariant requires), cut at a character boundary. |
+| #23 | Accepted acp-kernel's post-v0.0.98 license term: README attribution, `THIRD-PARTY-LICENSES.md`, `CONTRIBUTING.md`. |
+| #24 | First v0.0.98+ fixes: nudge re-anchor on the shown reference (`a587c0c`), single-object `content` salvage (`afa1c54`), case-insensitive tool-name tests (`2cc21fa`). Tests in `noa/upstream_v098_test.go`. |
 
 `ProtectedLatestTools` deviates in one detail: upstream gives the latest instance a
 `BLOCKED` ref, as it does for hard-protected tools. `noa` leaves it addressable and

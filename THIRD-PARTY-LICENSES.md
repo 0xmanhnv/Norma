@@ -90,7 +90,13 @@ The following paths contain changes taken from acp-kernel v0.0.98 or later and a
 covered by the license below, which is upstream's `LICENSE` as of v0.0.98 (commit
 `9e726fb`), unchanged through v0.0.101 (commit `5aa1a10`):
 
-- None yet.
+- `noa/nudge.go` — `stampNudge` re-anchors on the shown reference
+  (`src/compress.ts`, nudgeNode; `a587c0c`, v0.0.99).
+- `noa/parseinput.go` — single entry object in the `content` field
+  (`src/parse-compress-input.ts`; `afa1c54`, v0.0.98).
+- `noa/upstream_v098_test.go` — tests adapted from `tests/nudge.test.ts`,
+  `tests/protect-recent.test.ts` (`2cc21fa`, v0.0.100) and
+  `tests/parse-compress-input.test.ts`.
 
 The license text, verbatim (English and Chinese):
 

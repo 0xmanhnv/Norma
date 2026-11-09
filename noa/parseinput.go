@@ -52,6 +52,10 @@ type CompressParseDiagnostics struct {
 	// QuoteSalvage marks output recovered by rewriting single-quoted JSON
 	// into double-quoted JSON.
 	QuoteSalvage bool
+	// ContentSalvage marks a content value that was a single entry object (or
+	// an object holding a "ranges" array) rather than an array, recovered into
+	// the array form.
+	ContentSalvage bool
 }
 
 // CompressParseResult is the parsed call.
@@ -195,6 +199,20 @@ func decodeContent(rawContent any, d *CompressParseDiagnostics) ([]map[string]an
 			}
 		}
 		return nil, ParseContentNotList
+	case map[string]any:
+		// A single entry OBJECT where the one-element array belongs — retry drift
+		// seen from real models. Wrap it so the per-entry validation applies
+		// unchanged (a garbage object still fails, with per-entry reasons); a
+		// nested "ranges" array is unwrapped instead.
+		//
+		// Ported from acp-kernel (MIT plus Additional Term, Copyright (c) 2026
+		// ranxianglei): src/parse-compress-input.ts, parseObjectValue —
+		// afa1c54 (v0.0.98, acp-kernel#470).
+		d.ContentSalvage = true
+		if nested, ok := v["ranges"].([]any); ok {
+			return toEntryMaps(nested), ParseOK
+		}
+		return []map[string]any{v}, ParseOK
 	default:
 		return nil, ParseContentNotList
 	}
