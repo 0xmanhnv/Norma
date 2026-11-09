@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xmanhnv/norma/llm"
 	"github.com/0xmanhnv/norma/permission"
 )
 
@@ -55,7 +56,69 @@ func NewBash() CoreTool {
 		},
 		Permissions: bashPermissions,
 		Run:         runBash,
+		Output:      bashOutput,
 	})
+}
+
+// CommandOutput is the Bash tool's value for a command that ran in the
+// foreground to an end: it exited, failed to run, or hit its timeout. Starting
+// a command in the background, or moving it there, is answered with plain text.
+type CommandOutput struct {
+	// Output is the combined stdout and stderr, already bounded for the
+	// context window (see Capture): past the budget it is a head plus the
+	// spill store's guidance.
+	Output string `json:"output"`
+	// ExitCode is the command's exit status (0 unless Failed).
+	ExitCode int `json:"exit_code"`
+	// Failed reports a command that ended unsuccessfully: a non-zero exit, or
+	// a kill.
+	Failed bool `json:"failed,omitempty"`
+	// TimedOut reports a command killed at Timeout.
+	TimedOut bool   `json:"timed_out,omitempty"`
+	Timeout  string `json:"timeout,omitempty"`
+	// RunError says why the command could not run to an exit status.
+	RunError string `json:"run_error,omitempty"`
+}
+
+var bashOutput = DeclareOutput(OutputSpec[CommandOutput]{
+	Schema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"output":    map[string]any{"type": "string"},
+			"exit_code": map[string]any{"type": "integer"},
+			"failed":    map[string]any{"type": "boolean"},
+			"timed_out": map[string]any{"type": "boolean"},
+			"timeout":   map[string]any{"type": "string"},
+			"run_error": map[string]any{"type": "string"},
+		},
+		"required": []any{"output", "exit_code"},
+	},
+	Render: func(_ json.RawMessage, v CommandOutput) ([]llm.ContentBlock, error) {
+		var s string
+		switch {
+		case v.RunError != "":
+			s = fmt.Sprintf("%s\n\n[failed to run: %s]", v.Output, v.RunError)
+		case v.TimedOut:
+			s = v.Output + fmt.Sprintf("\n\n[command timed out after %s]", v.Timeout)
+		case v.Failed:
+			out := v.Output
+			if out == "" {
+				out = "(no output)"
+			}
+			s = fmt.Sprintf("%s\n\n[exit code %d]", out, v.ExitCode)
+		case strings.TrimSpace(v.Output) == "":
+			s = "(command produced no output)"
+		default:
+			s = v.Output
+		}
+		return []llm.ContentBlock{llm.TextBlock(s)}, nil
+	},
+})
+
+// commandResult wraps v as the tool's result; anything but a clean exit is an
+// error result.
+func commandResult(v CommandOutput) Result {
+	return Result{Data: v, IsError: v.Failed || v.TimedOut || v.RunError != ""}
 }
 
 func bashPermissions(_ context.Context, input json.RawMessage, _ permission.Context) permission.Decision {
@@ -126,16 +189,14 @@ func runBashManaged(ctx context.Context, tc *ToolContext, command string, timeou
 		info, _ := tc.Tasks.Get(t.ID)
 		output = taskOutputFor(tc, t.ID, output) // before Forget removes the file
 		tc.Tasks.Forget(t.ID)
-		if info.Status == TaskFailed {
-			if strings.TrimSpace(output) == "" {
-				output = "(no output)"
-			}
-			return Errorf(fmt.Sprintf("%s\n\n[exit code %d]", Capture(tc, output), info.ExitCode)), nil
-		}
 		if strings.TrimSpace(output) == "" {
-			output = "(command produced no output)"
+			output = "" // shown as "(no output)" or "(command produced no output)"
 		}
-		return Text(Capture(tc, output)), nil
+		v := CommandOutput{Output: Capture(tc, output)}
+		if info.Status == TaskFailed {
+			v.Failed, v.ExitCode = true, info.ExitCode
+		}
+		return commandResult(v), nil
 	}
 
 	// Timed out while still running.
@@ -149,7 +210,7 @@ func runBashManaged(ctx context.Context, tc *ToolContext, command string, timeou
 	tc.Tasks.Kill(t.ID)
 	out = taskOutputFor(tc, t.ID, out)
 	tc.Tasks.Forget(t.ID)
-	return Errorf(Capture(tc, out) + fmt.Sprintf("\n\n[command timed out after %s]", timeout)), nil
+	return commandResult(CommandOutput{Output: Capture(tc, out), TimedOut: true, Timeout: timeout.String()}), nil
 }
 
 // runBashSync is the original blocking implementation, used when no task manager
@@ -174,24 +235,20 @@ func runBashSync(ctx context.Context, tc *ToolContext, command string, timeout t
 	cmd.Stderr = &buf
 	err := cmd.Run()
 
-	out := Capture(tc, buf.String())
+	v := CommandOutput{Output: Capture(tc, buf.String())}
 	if cctx.Err() == context.DeadlineExceeded {
-		return Errorf(out + fmt.Sprintf("\n\n[command timed out after %s]", timeout)), nil
+		v.TimedOut, v.Timeout = true, timeout.String()
+		return commandResult(v), nil
 	}
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			if out == "" {
-				out = "(no output)"
-			}
-			return Errorf(fmt.Sprintf("%s\n\n[exit code %d]", out, ee.ExitCode())), nil
+			v.Failed, v.ExitCode = true, ee.ExitCode()
+		} else {
+			v.RunError = err.Error()
 		}
-		return Errorf(fmt.Sprintf("%s\n\n[failed to run: %v]", out, err)), nil
 	}
-	if strings.TrimSpace(out) == "" {
-		out = "(command produced no output)"
-	}
-	return Text(out), nil
+	return commandResult(v), nil
 }
 
 // autoBackgroundAllowed reports whether a timed-out command may be moved to the

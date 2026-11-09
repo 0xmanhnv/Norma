@@ -1,12 +1,11 @@
 package tool
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"time"
 	"unicode/utf8"
 )
 
@@ -22,31 +21,31 @@ func maxOut(tc *ToolContext) int {
 var spillSeq atomic.Int64
 
 // Capture bounds a tool's textual output for the model. When the output exceeds
-// the limit (ToolContext.MaxOutputChars, default 30000) and the host configured
-// an OutputDir, the FULL output is written to a file there and a tight head + a
-// pointer to that file is returned — so the model can read slices on demand
-// (grep/sed) instead of losing the overflow. Without an OutputDir it falls back
-// to a head+tail truncation (the overflow is discarded). Tools that produce
-// potentially large output should return Capture(tc, output) rather than the raw
-// string.
+// the limit (ToolContext.MaxOutputChars, default 30000) and the call has a
+// spill store (ToolContext.Spill, or a LocalSpill over ToolContext.OutputDir),
+// the FULL output is stored there and a tight head + the store's retrieval
+// guidance is returned — so the model can read slices on demand (grep/sed)
+// instead of losing the overflow. Without a store, or when storing fails, it
+// falls back to a head+tail truncation (the overflow is discarded). Tools that
+// produce potentially large output should return Capture(tc, output) rather
+// than the raw string.
 //
-// The pointer is always an ABSOLUTE path: a relative one only resolves from the
-// working directory it was computed against, and the reader is often somewhere
-// else — a later command after a `cd`, a resumed session with a different
-// WorkingDir, or an out-of-band tool (grep/sed) the model runs itself. Heads cut
-// by Capture and tail-fallbacks in truncate() are aligned to UTF-8 rune
-// boundaries, so a bounded result never carries a half-encoded character.
+// With the local store the pointer is always an ABSOLUTE path (see LocalSpill).
+// Heads cut by Capture and tail-fallbacks in truncate() are aligned to UTF-8
+// rune boundaries, so a bounded result never carries a half-encoded character.
 func Capture(tc *ToolContext, s string) string {
 	max := maxOut(tc)
 	if len(s) <= max {
 		return s
 	}
-	if tc != nil && tc.OutputDir != "" {
-		if path, err := spillOutput(tc.OutputDir, s); err == nil {
+	if store := spillStore(tc); store != nil {
+		// Capture has no context of its own; a store that needs one for a
+		// deadline should bound itself.
+		if sp, err := store.Store(context.Background(), SpillItem{Data: []byte(s), MediaType: MediaText}); err == nil {
 			lines := strings.Count(s, "\n") + 1
 			return cutHead(s, max) + fmt.Sprintf(
-				"\n\n... <persisted-output>[Output too large: full %d bytes / %d lines.Full output saved to  %s </persisted-output>",
-				len(s), lines, path)
+				"\n\n... <persisted-output>[Output too large: full %d bytes / %d lines.%s </persisted-output>",
+				len(s), lines, sp.Guidance)
 		}
 	}
 	return truncate(s, max)
@@ -74,31 +73,6 @@ func CaptureOnce(tc *ToolContext, s string) string {
 		return s
 	}
 	return Capture(tc, s)
-}
-
-func spillOutput(dir, s string) (string, error) {
-	// Resolve the directory first: the returned pointer is what the model will
-	// read, so it must not depend on anyone's current working directory.
-	//
-	// A failure here is reported rather than papered over with the relative
-	// path. filepath.Abs only fails when dir is relative and os.Getwd fails —
-	// i.e. the process's cwd has been deleted, which is precisely when a
-	// relative pointer is most useless. Capture's caller falls back to
-	// truncate(), which hands the model bounded output instead of a path it
-	// cannot resolve.
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
-		return "", err
-	}
-	name := fmt.Sprintf("output-%d-%d.txt", time.Now().Unix(), spillSeq.Add(1))
-	path := filepath.Join(abs, name)
-	if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 // resolvePath joins a relative path against the working directory.

@@ -170,10 +170,19 @@ type Client struct {
 }
 
 type remoteTool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 }
+
+// StructuredContent is the structured result an MCP tool returned next to its
+// content, kept as the call's value in tool.Result.Data (raw JSON, as the
+// server sent it). The model reads the text content as before; the value is
+// for the host and programmatic callers. When the tool declares an
+// outputSchema, a value that does not match it is dropped rather than passed
+// on with a shape the declaration does not promise.
+type StructuredContent json.RawMessage
 
 // initialize performs the MCP handshake.
 func (c *Client) initialize(ctx context.Context) error {
@@ -234,7 +243,8 @@ func (c *Client) wrap(rt remoteTool) tool.CoreTool {
 					Type string `json:"type"`
 					Text string `json:"text"`
 				} `json:"content"`
-				IsError bool `json:"isError"`
+				StructuredContent json.RawMessage `json:"structuredContent"`
+				IsError           bool            `json:"isError"`
 			}
 			if err := json.Unmarshal(raw, &res); err != nil {
 				return tool.Errorf("Error: bad MCP response: " + err.Error()), nil
@@ -243,9 +253,28 @@ func (c *Client) wrap(rt remoteTool) tool.CoreTool {
 			for _, blk := range res.Content {
 				text += blk.Text
 			}
-			return tool.Result{Content: []llm.ContentBlock{llm.TextBlock(tool.Capture(tc, text))}, IsError: res.IsError}, nil
+			out := tool.Result{Content: []llm.ContentBlock{llm.TextBlock(tool.Capture(tc, text))}, IsError: res.IsError}
+			if v := structured(res.StructuredContent, rt.OutputSchema, res.IsError); v != nil {
+				out.Data = v
+			}
+			return out, nil
 		},
 	})
+}
+
+// structured returns the value to keep from a tools/call result, or nil: none
+// was sent, it was JSON null, or it fails the tool's declared outputSchema (an
+// error result is not held to the schema).
+func structured(raw json.RawMessage, schema map[string]any, isError bool) StructuredContent {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	if schema != nil && !isError {
+		if err := tool.ValidateInput(schema, raw); err != nil {
+			return nil
+		}
+	}
+	return StructuredContent(append(json.RawMessage(nil), raw...))
 }
 
 // Close shuts down the client's transport.

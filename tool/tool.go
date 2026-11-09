@@ -31,6 +31,9 @@ type ToolContext struct {
 	// (full content preserved) instead of being discarded by truncation; the
 	// tool returns a head + a pointer to the file. Empty disables spilling.
 	OutputDir string
+	// Spill, when set, is where oversized output is stored instead of a file
+	// in OutputDir (see SpillStore). Nil uses OutputDir.
+	Spill SpillStore
 	// TailOnly makes Bash and TaskOutput hand Capture only the last
 	// MaxOutputChars of a task's output file, the behaviour before whole
 	// outputs were kept. By default, when OutputDir is set, a finished task's
@@ -75,12 +78,20 @@ type Result struct {
 	// the conversation, so a tool can show the model a short summary while handing
 	// the host the full typed record (and pointers to raw output) through
 	// harness.QueryInput.OnToolResult. Nil for ordinary tools.
+	//
+	// For a tool with a declared output (Spec.Output) Data is that output's
+	// value: Run puts it here with Content empty, and Call hands back the
+	// validated, frozen copy with Content rendered from it.
 	Data any
 	// ErrorCode classifies an IsError result for hosts, hooks and the
 	// transcript (llm.ContentBlock.ToolError). The model never sees it. A tool
 	// that returns an error from Call needs no code here: the harness takes the
 	// error's own (llm.CodeOf). Empty leaves the result unclassified.
 	ErrorCode llm.Code
+	// Meta is presentation metadata projected from a declared output's value
+	// (OutputSpec.Meta): for the host only, never sent to the model or written
+	// to the transcript. Nil for ordinary tools.
+	Meta map[string]any
 }
 
 // Codes the harness assigns to tool calls that fail before or around the tool
@@ -151,6 +162,12 @@ type Spec struct {
 	// Only set this on a tool that treats its input as untrusted bytes and
 	// answers every shape with a Result rather than an error.
 	RawInput bool
+
+	// Output, when set, declares the typed value Run returns in Result.Data
+	// (see DeclareOutput). Call validates and freezes that value and renders
+	// the model-facing Content from it. Optional: tools that build Content
+	// themselves leave it nil and work exactly as before.
+	Output *Output
 }
 
 // Build constructs a CoreTool from a Spec, applying fail-closed defaults.
@@ -191,8 +208,15 @@ func (t *builtTool) CheckPermissions(ctx context.Context, in json.RawMessage, pc
 	return t.spec.Permissions(ctx, in, pc)
 }
 
+// Output returns the declared output, or nil (see OutputOf).
+func (t *builtTool) Output() *Output { return t.spec.Output }
+
 func (t *builtTool) Call(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
-	return t.spec.Run(ctx, in, tc)
+	res, err := t.spec.Run(ctx, in, tc)
+	if err != nil || t.spec.Output == nil {
+		return res, err
+	}
+	return t.spec.Output.Apply(in, res)
 }
 
 // readOnlyTrue / concurrentTrue are shared helpers for read tools.

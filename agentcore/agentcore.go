@@ -63,6 +63,9 @@ type Options struct {
 	// tool.Result.Data (see harness.QueryInput.OnToolResult). Must be safe for
 	// concurrent use.
 	OnToolResult func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
+	// RewriteToolResult is the post-execute policy point (see
+	// harness.QueryInput.RewriteToolResult). Must be safe for concurrent use.
+	RewriteToolResult func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result) tool.Rewrite
 
 	// Compaction, when non-nil, enables automatic context-window management,
 	// summarizing with the same Provider. Ignored when Compactor is set.
@@ -172,6 +175,9 @@ type Options struct {
 	// size fed to the model (0 = default 30000).
 	ToolOutputDir      string
 	MaxToolOutputChars int
+	// SpillStore, when set, keeps oversized output instead of files in
+	// ToolOutputDir (see tool.SpillStore).
+	SpillStore tool.SpillStore
 	// TaskOutputTailOnly makes a finished foreground command return only the
 	// tail of its output, as before full output was kept (see
 	// harness.QueryInput.TaskOutputTailOnly).
@@ -562,6 +568,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		Todos:              s.opts.Todos,
 		ToolOutputDir:      s.opts.ToolOutputDir,
 		MaxToolOutputChars: s.opts.MaxToolOutputChars,
+		SpillStore:         s.opts.SpillStore,
 		TaskOutputTailOnly: s.opts.TaskOutputTailOnly,
 		Tasks:              s.tasks,
 		BashEnv:            s.opts.BashEnv,
@@ -571,6 +578,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		CanUseTool:         s.opts.CanUseTool,
 		Hooks:              s.opts.Hooks,
 		OnToolResult:       s.opts.OnToolResult,
+		RewriteToolResult:  s.opts.RewriteToolResult,
 		Compactor:          s.compactor,
 		TokenBudget:        s.opts.TokenBudget,
 		EscalateMaxTokens:  s.opts.EscalateMaxTokens,

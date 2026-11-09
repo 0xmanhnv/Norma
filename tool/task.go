@@ -623,13 +623,13 @@ func (m *Manager) FullOutput(id string) (string, error) {
 }
 
 // taskOutputFor is what a tool hands Capture for a task's output: the whole
-// file when the host keeps spilled output (OutputDir set) and has not asked
+// file when the host keeps spilled output (a spill store is set) and has not asked
 // for the tail only, else the tail Output returns. Taking the whole file
 // means a command that printed more than the output budget keeps its first
 // part too, in the spill file, instead of losing everything before the last
 // MaxOutputChars. If the whole file cannot be read the tail is used.
 func taskOutputFor(tc *ToolContext, id string, tail string) string {
-	if tc == nil || tc.Tasks == nil || tc.OutputDir == "" || tc.TailOnly {
+	if tc == nil || tc.Tasks == nil || spillStore(tc) == nil || tc.TailOnly {
 		return tail
 	}
 	if full, err := tc.Tasks.FullOutput(id); err == nil {
