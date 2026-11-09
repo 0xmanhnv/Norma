@@ -58,5 +58,7 @@ var AlwaysProtectedTools = []string{CompressToolName}
 // fully compressible; this is not the same thing as Config.ProtectedTools,
 // which is a hard exclusion.
 //
-// These are Norma's tool names (CamelCase), not upstream's lowercase ones.
+// These are Norma's tool names (CamelCase), not upstream's lowercase ones. This
+// is the default; Config.NeverPreserveRecentTools replaces it for a session and
+// Config.PreserveRecentTools subtracts from it.
 var NeverPreserveRecentTools = []string{"Read", "Grep", "Glob", "Bash", "LS"}
