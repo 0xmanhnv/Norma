@@ -93,6 +93,10 @@ good summaries. Enabling it disables the built-in compaction. Originals are pres
 in the archive directory (the only route back to compressed content), and compression
 state can be inherited across forks and subagents via `ParentSessionIDs`.
 
+`noa` is a port of acp-kernel; [noa upstream sync](noa-upstream-sync.md) records the
+upstream baseline, every upstream change since, and what was ported, deferred or
+skipped.
+
 ## Choosing
 
 - **Built-in compaction** needs no extra tool and no archive; summaries are written by

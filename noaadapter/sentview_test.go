@@ -136,14 +136,14 @@ func TestLadderFallsWhenAnActiveBlockHidesContent(t *testing.T) {
 
 // Subtracting block coverage is not enough, which is why upstream needed a
 // second layer. prune also removes messages NO block covers: a tool result
-// whose paired call was compressed away is orphaned and stripped from every
-// request, forever, while a coverage-based estimate keeps counting it.
+// whose call is gone is orphaned and stripped from every request, forever,
+// while a coverage-based estimate keeps counting it.
 //
-// The layout below produces exactly that. One assistant message carries 21 tool
-// calls; their results follow. The first call's result therefore sits 21
-// positions past it — one beyond noa.ToolPairMaxScan — so boundary adjustment
-// cannot pull it into the range, and compressing the call alone orphans the
-// result. This is upstream's #289 Fix A discriminator, ported.
+// Compress itself can no longer produce such an orphan — the fold-integrity
+// gate keeps a call and its result on the same side of a fold — so the test
+// first pins that, then plants the orphan the way a host would leave one: a
+// trimmed or rewritten history that kept a result and lost its call. This is
+// upstream's #289 Fix A discriminator, adapted.
 func TestLadderStopsCountingOrphansPruneStripsEveryTurn(t *testing.T) {
 	window := 200_000
 	sess := simSession(t, window)
@@ -158,11 +158,12 @@ func TestLadderStopsCountingOrphansPruneStripsEveryTurn(t *testing.T) {
 
 	msgs := []llm.Message{userText("Audit the build.")}
 	msgs = append(msgs, assistantWith(calls...))
-	msgs = append(msgs, toolResult("c1", strings.Repeat("y", 100_000)))
+	msgs = append(msgs, toolResult("c1", strings.Repeat("z", 20_000)))
 	for i := 2; i <= fanout; i++ {
 		msgs = append(msgs, toolResult(fmt.Sprintf("c%d", i), "ok"))
 	}
-	// Trailing work so c1's exchange is outside the protected recent window.
+	burstEnd := len(msgs)
+	// Trailing work so the burst is outside the protected recent window.
 	for i := range 6 {
 		call := fmt.Sprintf("t%d", i)
 		msgs = append(msgs,
@@ -172,13 +173,29 @@ func TestLadderStopsCountingOrphansPruneStripsEveryTurn(t *testing.T) {
 	}
 
 	sess.View(msgs)
-	ref := refOfCore(t, sess, msgs, func(c noa.CoreMessage) bool {
+	c1Call := refOfCore(t, sess, msgs, func(c noa.CoreMessage) bool {
 		return c.ToolCallID == "c1" && c.ContentType == noa.CTToolCall
 	})
-	panel := compressRange(t, sess, "tc1", ref, ref)
-	if noa.PanelBlockCount(panel) == 0 {
-		t.Fatalf("compressing c1's call alone did not form a block:\n%s", panel)
+	// c1's result sits 21 positions past its call, beyond ToolPairMaxScan, so
+	// boundary widening cannot pull it in. The integrity gate must refuse.
+	refused := compressRange(t, sess, "tc0", c1Call, c1Call)
+	if noa.PanelBlockCount(refused) != 0 || !strings.Contains(refused, "tool call/result pair") {
+		t.Fatalf("compressing c1's call alone must be refused to keep the pair whole:\n%s", refused)
 	}
+
+	// Fold the whole burst so prune has a block to apply.
+	lastResult := refOfCore(t, sess, msgs, func(c noa.CoreMessage) bool {
+		return c.ToolCallID == fmt.Sprintf("c%d", fanout) && c.ContentType == noa.CTToolResult
+	})
+	panel := compressRange(t, sess, "tc1", c1Call, lastResult)
+	if noa.PanelBlockCount(panel) == 0 {
+		t.Fatalf("compressing the whole burst did not form a block:\n%s", panel)
+	}
+
+	// Plant the orphan: a large result whose call is nowhere in the history.
+	orphan := toolResult("ghost", strings.Repeat("y", 100_000))
+	tail := append([]llm.Message{orphan}, msgs[burstEnd:]...)
+	msgs = append(msgs[:burstEnd:burstEnd], tail...)
 	msgs = append(msgs,
 		assistantWith(toolUse("tc1", noa.CompressToolName, `{}`)),
 		toolResult("tc1", panel),
@@ -188,30 +205,28 @@ func TestLadderStopsCountingOrphansPruneStripsEveryTurn(t *testing.T) {
 	sent := estimateMessages(view)
 	ladder := ladderTokens(sess)
 
-	// The premise: c1's result really is gone from the request, and really is
-	// not covered by the block. If either stops holding, the fixture has drifted
-	// and the assertion below would be meaningless.
+	// The premise: the orphan really is gone from the request, and really is
+	// not covered by the block.
 	if strings.Contains(strings.Join(textOf(view), "\n"), strings.Repeat("y", 1000)) {
-		t.Fatal("c1's tool result is still in the request; the orphan layout did not take")
+		t.Fatal("the orphaned tool result is still in the request; the orphan layout did not take")
 	}
 	covered := noa.CoveredMessageIDs(sess.State())
 	cores, _ := Project(msgs)
 	var orphanID string
 	for _, c := range cores {
-		if c.ToolCallID == "c1" && c.ContentType == noa.CTToolResult {
+		if c.ToolCallID == "ghost" && c.ContentType == noa.CTToolResult {
 			orphanID = c.ID
 		}
 	}
 	if orphanID == "" {
-		t.Fatal("c1's tool result vanished from the projection; the fixture is wrong")
+		t.Fatal("the orphaned result vanished from the projection; the fixture is wrong")
 	}
 	if covered[orphanID] {
-		t.Skip("boundary adjustment pulled c1's result into the block after all — " +
-			"the orphan case is not exercised and this discriminator does not apply")
+		t.Fatal("the orphan is covered by a block; this discriminator does not apply")
 	}
 
 	if ladder > sent*2 {
-		t.Fatalf("c1's 100k-char result is stripped from every request and covered by no block, "+
+		t.Fatalf("a 100k-char orphan is stripped from every request and covered by no block, "+
 			"yet the ladder reads %d tokens for a request weighing %d.\n"+
 			"Subtracting block coverage alone would not fix this: nothing covers the orphan. "+
 			"Upstream's second layer (sentViewTokenCount) re-measures on the actual "+

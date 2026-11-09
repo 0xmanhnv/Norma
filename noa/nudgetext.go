@@ -267,7 +267,8 @@ func renderGentleNudge(d NudgeDecision, s NudgeSections, breakdown, blockMap str
 		parts = append(parts, "", blockMap)
 	}
 	parts = append(parts, "",
-		"💡 Compress all ranges in one call (pass multiple content entries: `content: [{...}, {...}]`).")
+		"💡 If you compress, fold the ranges you keep in ONE call (pass multiple content entries: `content: [{...}, {...}]`). "+
+			"Ranges the task still needs can wait — they reappear in later nudges.")
 	return strings.Join(compact(parts), "\n")
 }
 
@@ -303,6 +304,7 @@ func FormatBreakdown(d NudgeDecision) string {
 type mergedRange struct {
 	startRef, endRef   string
 	startNum, endNum   int
+	startPos, endPos   int
 	count, tokens      int
 	userMsgs           int
 	compressibleTokens int
@@ -314,6 +316,12 @@ type mergedRange struct {
 }
 
 // FormatRanges lists what may and may not be compressed, oldest first.
+//
+// Spans are ordered and merged by POSITION in the view, not by ref number:
+// refs need not be monotonic in view order, and a pair of endpoints merged by
+// number can resolve to a far smaller slice than the line displays, so the
+// model's pick fails the size gate. Ranges without positions fall back to ref
+// order.
 //
 // Compressible and protected spans are merged into ONE ordered list rather than
 // two sections. Splitting them loses the time order and hides overlap — a span
@@ -327,8 +335,13 @@ func FormatRanges(compressible []RangeInfo, protected []ProtectedRange) string {
 	for _, r := range compressible {
 		s, _ := RefToIndex(r.StartRef)
 		e, _ := RefToIndex(r.EndRef)
+		sp, ep := s, e
+		if r.Positioned {
+			sp, ep = r.StartIndex, r.EndIndex
+		}
 		entries = append(entries, mergedRange{
 			startRef: r.StartRef, endRef: r.EndRef, startNum: s, endNum: e,
+			startPos: sp, endPos: ep,
 			count: r.Count, tokens: r.Tokens, userMsgs: r.UserMsgs,
 			compressibleTokens: r.Tokens, toolPct: r.ToolPct, textPct: r.TextPct,
 			dangerous: r.Dangerous,
@@ -337,21 +350,32 @@ func FormatRanges(compressible []RangeInfo, protected []ProtectedRange) string {
 	for _, r := range protected {
 		s, _ := RefToIndex(r.StartRef)
 		e, _ := RefToIndex(r.EndRef)
+		sp, ep := s, e
+		if r.Positioned {
+			sp, ep = r.StartIndex, r.EndIndex
+		}
 		entries = append(entries, mergedRange{
 			startRef: r.StartRef, endRef: r.EndRef, startNum: s, endNum: e,
+			startPos: sp, endPos: ep,
 			count: r.Count, tokens: r.Tokens,
 			protectedTokens: r.Tokens, protectedCount: r.Count,
 			protectedTools: append([]string(nil), r.Tools...),
 		})
 	}
-	sort.SliceStable(entries, func(i, j int) bool { return entries[i].startNum < entries[j].startNum })
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].startPos != entries[j].startPos {
+			return entries[i].startPos < entries[j].startPos
+		}
+		return entries[i].startNum < entries[j].startNum
+	})
 
 	var merged []mergedRange
 	for _, e := range entries {
-		if n := len(merged); n > 0 && e.startNum <= merged[n-1].endNum+1 {
+		if n := len(merged); n > 0 && e.startPos <= merged[n-1].endPos+1 {
 			last := &merged[n-1]
 			last.endRef = e.endRef
 			last.endNum = max(last.endNum, e.endNum)
+			last.endPos = max(last.endPos, e.endPos)
 			last.count += e.count
 			last.tokens += e.tokens
 			last.userMsgs += e.userMsgs

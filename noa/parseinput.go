@@ -66,11 +66,7 @@ func ParseCompressArgs(raw []byte) CompressParseResult {
 	res := CompressParseResult{}
 	d := &res.Diagnostics
 	d.Length = len(raw)
-	if len(raw) > rawPrefixLen {
-		d.RawPrefix = string(raw[:rawPrefixLen])
-	} else {
-		d.RawPrefix = string(raw)
-	}
+	d.RawPrefix = clampRunes(string(raw), rawPrefixLen)
 
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
@@ -438,4 +434,17 @@ func intField(m map[string]any, key string) *int {
 		}
 	}
 	return nil
+}
+
+// clampRunes keeps at most n characters of s. Cutting by byte could split a
+// multi-byte character and leave invalid UTF-8 in the diagnostics.
+func clampRunes(s string, n int) string {
+	i := 0
+	for pos := range s {
+		if i == n {
+			return s[:pos]
+		}
+		i++
+	}
+	return s
 }

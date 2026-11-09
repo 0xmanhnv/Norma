@@ -2,26 +2,43 @@ package noa
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-// upstreamSource is the checked-out acp-kernel this port was taken from. The
-// comparison is skipped when it is absent, so the suite still runs on a machine
-// without it.
-const upstreamSource = "/home/kali/acp-kernel/src/compression-rules.ts"
+// UpstreamRulesCommit pins the acp-kernel source the rule constants correspond
+// to: tag v0.0.97, commit 1d42ec2197f8f3c879c72e9029c4bcc442180308. The four
+// constants in src/compression-rules.ts are byte-identical from that commit
+// through v0.0.101. See docs/guides/noa-upstream-sync.md.
+const UpstreamRulesCommit = "1d42ec2197f8f3c879c72e9029c4bcc442180308"
+
+// upstreamDirEnv names an acp-kernel checkout to compare against, e.g.
+//
+//	NOA_UPSTREAM_DIR=~/src/acp-kernel go test ./noa -run Rules
+//
+// Check out UpstreamRulesCommit (or any later commit whose rules have not
+// changed) first. Unset, the comparison is skipped so the suite runs anywhere.
+const upstreamDirEnv = "NOA_UPSTREAM_DIR"
 
 func upstreamConst(t *testing.T, name string) (string, bool) {
 	t.Helper()
-	raw, err := os.ReadFile(upstreamSource)
-	if err != nil {
+	dir := os.Getenv(upstreamDirEnv)
+	if dir == "" {
 		return "", false
+	}
+	path := filepath.Join(dir, "src", "compression-rules.ts")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		// The variable was set on purpose; a missing file is a setup error,
+		// not a reason to pass silently.
+		t.Fatalf("%s is set but %s cannot be read: %v", upstreamDirEnv, path, err)
 	}
 	re := regexp.MustCompile("(?s)export const " + name + " = `(.*?)`;\n")
 	m := re.FindSubmatch(raw)
 	if m == nil {
-		t.Fatalf("upstream constant %s not found in %s", name, upstreamSource)
+		t.Fatalf("upstream constant %s not found in %s", name, path)
 	}
 	return strings.ReplaceAll(string(m[1]), "\\`", "`"), true
 }
@@ -44,7 +61,7 @@ var allowedEdits = []struct{ upstream, ported string }{
 func TestHowToCompressRulesMatchesUpstream(t *testing.T) {
 	up, ok := upstreamConst(t, "HOW_TO_COMPRESS_RULES")
 	if !ok {
-		t.Skip("upstream acp-kernel checkout not present")
+		t.Skip("set " + upstreamDirEnv + " to an acp-kernel checkout to compare")
 	}
 	want := up
 	for _, e := range allowedEdits {
@@ -77,7 +94,7 @@ func TestTierRulesAreVerbatim(t *testing.T) {
 	for _, c := range cases {
 		up, ok := upstreamConst(t, c.name)
 		if !ok {
-			t.Skip("upstream acp-kernel checkout not present")
+			t.Skip("set " + upstreamDirEnv + " to an acp-kernel checkout to compare")
 		}
 		if c.ported != up {
 			t.Errorf("%s diverges from upstream at byte %d — it must be verbatim",
