@@ -61,6 +61,9 @@ type QueryInput struct {
 	// per-tool output budget (head size; 0 = default 30000). See tool.Capture.
 	ToolOutputDir      string
 	MaxToolOutputChars int
+	// SpillStore, when set, replaces the files in ToolOutputDir as the place
+	// oversized output is kept (see tool.SpillStore). Nil keeps the default.
+	SpillStore tool.SpillStore
 	// TaskOutputTailOnly restores the old foreground-command result: only the
 	// last MaxToolOutputChars of the task's output, the rest dropped. By
 	// default, with ToolOutputDir set, the whole output goes through
@@ -102,6 +105,17 @@ type QueryInput struct {
 	// tool.Result.Data, which the model never sees. It runs on the tool's
 	// goroutine (tools may run in parallel), so it must be safe for concurrent use.
 	OnToolResult func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
+	// RewriteToolResult, when non-nil, is the post-execute policy point: it sees
+	// every result a tool produced (after a declared output was validated and
+	// rendered, before the output cap) and may keep it, replace only what the
+	// model reads (tool.ReplaceContent), or replace the value
+	// (tool.ReplaceValue), which is revalidated and rendered again. Replacing
+	// content is a presentation change, not a confidentiality mechanism: the
+	// value still reaches OnToolResult. A value replacement that fails turns the
+	// call into an error result rather than falling back to the original. Not
+	// called for calls the harness refused (permission, hooks, invalid input).
+	// Runs on the tool's goroutine, so it must be safe for concurrent use.
+	RewriteToolResult func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result) tool.Rewrite
 	// OnExit, when set, is called exactly once when the loop returns, however it
 	// ends. Normally it gets the Terminal also sent as the KindResult event. When
 	// the consumer stopped reading first, no result event was sent; OnExit then

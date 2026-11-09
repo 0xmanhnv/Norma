@@ -96,6 +96,7 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 		ToolUseID:      use.ID,
 		Emit:           emitProgress,
 		OutputDir:      l.in.ToolOutputDir,
+		Spill:          l.in.SpillStore,
 		MaxOutputChars: l.in.MaxToolOutputChars,
 		TailOnly:       l.in.TaskOutputTailOnly,
 		Tasks:          l.in.Tasks,
@@ -114,8 +115,13 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 		endSpan(err, map[string]any{"is_error": err != nil || res.IsError})
 	}
 	if err != nil {
-		res = tool.Errorf("Error: " + err.Error())
-		res.ErrorCode = llm.CodeOf(err)
+		res = errorResult(err)
+	}
+	if l.in.RewriteToolResult != nil {
+		rw := l.in.RewriteToolResult(l.ctx, use.ID, use.Name, input, res)
+		if res, err = tool.ApplyRewrite(tool.OutputOf(t), input, res, rw); err != nil {
+			res = errorResult(err) // fail closed: never fall back to the original
+		}
 	}
 	// Global output cap at the single post-tool choke point: EVERY tool —
 	// built-in, MCP, custom, host — is bounded here regardless of whether it
@@ -157,6 +163,14 @@ func callTool(ctx context.Context, t tool.CoreTool, input json.RawMessage, tc *t
 		}
 	}()
 	return t.Call(ctx, input, tc)
+}
+
+// errorResult is the result for a call that ended in err: the text the model
+// has always read, classified with the error's code.
+func errorResult(err error) tool.Result {
+	res := tool.Errorf("Error: " + err.Error())
+	res.ErrorCode = llm.CodeOf(err)
+	return res
 }
 
 // toolFailure is the error tool_result for a call the harness refused or cut

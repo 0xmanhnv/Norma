@@ -22,8 +22,10 @@ type ParentRun struct {
 	ToolOutputDir      string
 	MaxToolOutputChars int
 	TaskOutputTailOnly bool
+	SpillStore         tool.SpillStore
 	Tracer             Tracer
 	OnToolResult       func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
+	RewriteToolResult  func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result) tool.Rewrite
 	Settlement         *Settlement
 }
 
@@ -64,8 +66,10 @@ func (l *loop) parentRun(mode permission.Mode) ParentRun {
 		ToolOutputDir:      l.in.ToolOutputDir,
 		MaxToolOutputChars: l.in.MaxToolOutputChars,
 		TaskOutputTailOnly: l.in.TaskOutputTailOnly,
+		SpillStore:         l.in.SpillStore,
 		Tracer:             l.in.Tracer,
 		OnToolResult:       l.in.OnToolResult,
+		RewriteToolResult:  l.in.RewriteToolResult,
 		Settlement:         l.in.Settlement,
 	}
 }

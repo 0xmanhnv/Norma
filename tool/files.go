@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/0xmanhnv/norma/llm"
 )
 
 // NewRead builds the Read tool: reads a file with cat -n style line numbers and
@@ -30,7 +32,60 @@ func NewRead() CoreTool {
 		Concurrent:  always,
 		Permissions: allowReadOnly,
 		Run:         runRead,
+		Output:      readOutput,
 	})
+}
+
+// FileLines is the Read tool's value for a text file: the lines it read, as
+// they are in the file. The model sees them numbered, long lines cut, and a
+// pointer to the next offset when the output budget stopped the read early.
+// Directories, binary files and empty ranges are answered with plain text.
+type FileLines struct {
+	// FilePath is the path as the caller gave it.
+	FilePath string `json:"file_path"`
+	// StartLine is the 1-based number of Lines[0].
+	StartLine int `json:"start_line"`
+	// Lines holds the lines read, without their newlines.
+	Lines []string `json:"lines"`
+	// TotalLines is the number of lines in the file.
+	TotalLines int `json:"total_lines"`
+	// NextOffset, when non-zero, is the line to continue from: the read was
+	// cut short to fit the output budget.
+	NextOffset int `json:"next_offset,omitempty"`
+}
+
+var readOutput = DeclareOutput(OutputSpec[FileLines]{
+	Schema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"file_path":   map[string]any{"type": "string"},
+			"start_line":  map[string]any{"type": "integer"},
+			"lines":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"total_lines": map[string]any{"type": "integer"},
+			"next_offset": map[string]any{"type": "integer"},
+		},
+		"required": []any{"file_path", "start_line", "lines", "total_lines"},
+	},
+	Render: func(_ json.RawMessage, v FileLines) ([]llm.ContentBlock, error) {
+		s := formatLines(v.StartLine-1, v.Lines)
+		if v.NextOffset > 0 {
+			s += readTruncatedNotice(v.NextOffset)
+		}
+		return []llm.ContentBlock{llm.TextBlock(s)}, nil
+	},
+})
+
+// formatLines numbers lines cat -n style, the first being line start+1, and
+// cuts each at maxLineLen.
+func formatLines(start int, lines []string) string {
+	var b strings.Builder
+	for i, line := range lines {
+		if len(line) > maxLineLen {
+			line = line[:maxLineLen] + "… [line truncated]"
+		}
+		fmt.Fprintf(&b, "%6d\t%s\n", start+i+1, line)
+	}
+	return b.String()
 }
 
 const maxLineLen = 2000
@@ -77,21 +132,27 @@ func runRead(_ context.Context, input json.RawMessage, tc *ToolContext) (Result,
 	if end > len(lines) {
 		end = len(lines)
 	}
-	var b strings.Builder
-	for i := start; i < end; i++ {
-		line := lines[i]
-		if len(line) > maxLineLen {
-			line = line[:maxLineLen] + "… [line truncated]"
-		}
-		fmt.Fprintf(&b, "%6d\t%s\n", i+1, line)
-	}
-	if b.Len() == 0 {
+	shown := lines[start:end]
+	if len(shown) == 0 {
 		if len(data) == 0 {
 			return Text("(file is empty)"), nil
 		}
 		return Text("(no lines in the requested range)"), nil
 	}
-	return Text(readCapture(tc, b.String(), start)), nil
+	v := FileLines{FilePath: in.FilePath, StartLine: start + 1, Lines: shown, TotalLines: len(lines)}
+	// Fit the read to the output budget at a line boundary, so the model can
+	// page on with offset (see readCapture).
+	if s := formatLines(start, shown); len(s) > maxOut(tc)+readOutputBonus {
+		_, headLines := headWithinBudget(s, maxOut(tc)+readOutputBonus)
+		if headLines == 0 {
+			// Not even the first line fits: no whole line to give, so the cut
+			// text is the answer.
+			return Text(readCapture(tc, s, start)), nil
+		}
+		v.Lines = shown[:headLines]
+		v.NextOffset = start + headLines + 1
+	}
+	return Result{Data: v}, nil
 }
 
 // readDirMaxEntries bounds the listing Read returns for a directory.
@@ -151,7 +212,12 @@ func readCapture(tc *ToolContext, s string, start int) string {
 	}
 	head, headLines := headWithinBudget(s, max)
 	nextOffset := start + headLines + 1 // 1-based file line to continue from
-	return head + fmt.Sprintf(
+	return head + readTruncatedNotice(nextOffset)
+}
+
+// readTruncatedNotice tells the model where to continue a read cut short.
+func readTruncatedNotice(nextOffset int) string {
+	return fmt.Sprintf(
 		"\n... [Read truncated to fit the output limit. Continue reading the file with Read offset=%d (and an optional limit), or narrow with Grep/`sed -n`.] ...",
 		nextOffset)
 }

@@ -129,7 +129,8 @@ func (c ChildSummary) SubagentUsage() llm.Usage { return c.Usage }
 //
 // When it is started from a tool call, the child inherits the calling run's
 // safety settings and plumbing (harness.ParentRun): its deny and allow rules,
-// BashEnv, tool-output spill settings, tracer, OnToolResult and Settlement. Its
+// BashEnv, tool-output spill settings and store, tracer, OnToolResult,
+// RewriteToolResult and Settlement. Its
 // permission mode is the stricter of the parent's and the definition's, so a
 // child never runs with fewer restrictions than its parent.
 func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, workDir string) (string, ChildSummary, error) {
@@ -169,8 +170,10 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		in.ToolOutputDir = p.ToolOutputDir
 		in.MaxToolOutputChars = p.MaxToolOutputChars
 		in.TaskOutputTailOnly = p.TaskOutputTailOnly
+		in.SpillStore = p.SpillStore
 		in.Tracer = p.Tracer
 		in.OnToolResult = p.OnToolResult
+		in.RewriteToolResult = p.RewriteToolResult
 		in.Settlement = p.Settlement
 		if p.AgentID != "" {
 			in.AgentID = p.AgentID + "/" + agentType
