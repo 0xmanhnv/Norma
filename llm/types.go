@@ -78,6 +78,11 @@ type ContentBlock struct {
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   []ContentBlock `json:"content,omitempty"`
 	IsError   bool           `json:"is_error,omitempty"`
+	// ToolError classifies a failed tool_result for hosts, hooks and the
+	// transcript. It is local metadata: no adapter sends it to a provider (the
+	// Anthropic adapter, which marshals blocks directly, clears it), and the
+	// model sees only Content. Nil on success and on errors nothing classified.
+	ToolError *ToolError `json:"tool_error,omitempty"`
 }
 
 // TextBlock builds a text content block.

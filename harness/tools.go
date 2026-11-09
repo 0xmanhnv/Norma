@@ -28,11 +28,11 @@ func acceptsRawInput(t tool.CoreTool) bool {
 func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgress func(tool.ProgressInfo)) (llm.ContentBlock, []llm.Message) {
 	t, ok := l.in.Tools.Get(use.Name)
 	if !ok {
-		return llm.ToolResultText(use.ID, tool.UnknownToolText(l.in.Tools, use.Name), true), nil
+		return toolFailure(use, tool.UnknownToolText(l.in.Tools, use.Name), tool.CodeUnknownTool), nil
 	}
 	input := use.Input
 	if msg := l.settleRefusal(use); msg != "" {
-		return llm.ToolResultText(use.ID, msg, true), nil
+		return toolFailure(use, msg, tool.CodeToolUnavailable), nil
 	}
 
 	// Schema validation (FR-04.5).
@@ -48,7 +48,7 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	if !acceptsRawInput(t) {
 		input, coerced = tool.CoerceInput(t.InputSchema(), input)
 		if err := tool.ValidateInput(t.InputSchema(), input); err != nil {
-			return llm.ToolResultText(use.ID, "Error: invalid tool input: "+err.Error(), true), nil
+			return toolFailure(use, "Error: invalid tool input: "+err.Error(), tool.CodeInvalidInput), nil
 		}
 	}
 
@@ -75,7 +75,7 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 		if msg == "" {
 			msg = "denied"
 		}
-		return llm.ToolResultText(use.ID, "Tool call was not permitted: "+msg, true), nil
+		return toolFailure(use, "Tool call was not permitted: "+msg, tool.CodePermissionDenied), nil
 	}
 	if len(dec.UpdatedInput) > 0 {
 		input = dec.UpdatedInput
@@ -84,7 +84,7 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	// Pre-tool hook.
 	if l.in.Hooks != nil {
 		if block, msg, updated := l.in.Hooks.PreToolUse(l.ctx, use.Name, input); block {
-			return llm.ToolResultText(use.ID, "Blocked by hook: "+msg, true), nil
+			return toolFailure(use, "Blocked by hook: "+msg, tool.CodeHookBlocked), nil
 		} else if len(updated) > 0 {
 			input = updated
 		}
@@ -109,12 +109,13 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	if l.in.Tracer != nil {
 		callCtx, endSpan = l.in.Tracer.Start(callCtx, "tool.call", map[string]any{"tool": use.Name, "tool_use_id": use.ID})
 	}
-	res, err := t.Call(callCtx, input, tc)
+	res, err := callTool(callCtx, t, input, tc)
 	if endSpan != nil {
 		endSpan(err, map[string]any{"is_error": err != nil || res.IsError})
 	}
 	if err != nil {
 		res = tool.Errorf("Error: " + err.Error())
+		res.ErrorCode = llm.CodeOf(err)
 	}
 	// Global output cap at the single post-tool choke point: EVERY tool —
 	// built-in, MCP, custom, host — is bounded here regardless of whether it
@@ -139,7 +140,31 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 	if len(content) == 0 {
 		content = []llm.ContentBlock{llm.TextBlock("(no output)")}
 	}
-	return llm.ContentBlock{Type: llm.BlockToolResult, ToolUseID: use.ID, Content: content, IsError: res.IsError}, res.Extra
+	block := llm.ContentBlock{Type: llm.BlockToolResult, ToolUseID: use.ID, Content: content, IsError: res.IsError}
+	if res.IsError && res.ErrorCode != "" {
+		block.ToolError = &llm.ToolError{Name: use.Name, Code: res.ErrorCode}
+	}
+	return block, res.Extra
+}
+
+// callTool runs the tool, turning a panic into an error so that one broken
+// tool fails its own call instead of the process. The error carries
+// llm.CodeUnknown with the panic value as its cause (llm.Recovered).
+func callTool(ctx context.Context, t tool.CoreTool, input json.RawMessage, tc *tool.ToolContext) (res tool.Result, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			res, err = tool.Result{}, llm.Recovered(v)
+		}
+	}()
+	return t.Call(ctx, input, tc)
+}
+
+// toolFailure is the error tool_result for a call the harness refused or cut
+// short, classified with code. The text is what the model reads.
+func toolFailure(use llm.ContentBlock, text string, code llm.Code) llm.ContentBlock {
+	b := llm.ToolResultText(use.ID, text, true)
+	b.ToolError = &llm.ToolError{Name: use.Name, Code: code}
+	return b
 }
 
 // capOutput runs every text block of a tool result through the idempotent

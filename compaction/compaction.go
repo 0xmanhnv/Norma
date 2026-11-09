@@ -23,7 +23,6 @@ package compaction
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"github.com/0xmanhnv/norma/llm"
 )
@@ -209,14 +208,25 @@ func (c *Compactor) Reactive(ctx context.Context, msgs []llm.Message) ([]llm.Mes
 func (c *Compactor) IsOverflow(err error) bool { return IsOverflow(err) }
 
 // IsOverflow reports whether err is a context-length / prompt-too-long failure.
+//
+// The code decides first: the provider adapters classify the rejections they
+// recognise as llm.CodeContextOverflow, and an error they classified as
+// something else is not an overflow. Only an error that carries no code (or
+// llm.CodeUnknown) — from a custom Provider, a wrapper, or an adapter that saw
+// a phrasing it did not know — falls back to matching the text
+// (llm.LooksLikeOverflow).
 func IsOverflow(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "too long") || strings.Contains(s, "context length") ||
-		strings.Contains(s, "context_length") || strings.Contains(s, "maximum context") ||
-		strings.Contains(s, "status 413")
+	switch llm.CodeOf(err) {
+	case llm.CodeContextOverflow:
+		return true
+	case llm.CodeUnknown:
+		return llm.LooksLikeOverflow(err.Error())
+	default:
+		return false
+	}
 }
 
 // --- working-set geometry ---

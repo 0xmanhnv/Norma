@@ -55,8 +55,8 @@ func TestStripThoughtSignaturesNoCopyWhenUnset(t *testing.T) {
 		TextBlock("hi"),
 		{Type: BlockToolUse, ID: "c1", Name: "Bash"},
 	}
-	if got := stripThoughtSignatures(content); &got[0] != &content[0] {
-		t.Error("stripThoughtSignatures copied a slice that had nothing to strip")
+	if got := stripLocalFields(content); &got[0] != &content[0] {
+		t.Error("stripLocalFields copied a slice that had nothing to strip")
 	}
 }
 

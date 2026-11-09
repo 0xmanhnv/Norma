@@ -185,7 +185,8 @@ func rewindIndex(live []Record, uuid string) int {
 
 // ErrNotLive is returned by Rewind for a target that is not a live message of
 // the session.
-var ErrNotLive = errors.New("transcript: rewind target is not a live message of the session")
+// It carries llm.CodeInvalidArgument; compare with errors.Is.
+var ErrNotLive error = llm.NewError(llm.CodeInvalidArgument, "transcript: rewind target is not a live message of the session")
 
 // Rewind moves a main session back so that toUUID is its last message ("" =
 // empty). It appends a rewind record and deletes nothing. Call it only while

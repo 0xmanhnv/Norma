@@ -76,7 +76,24 @@ type Result struct {
 	// the host the full typed record (and pointers to raw output) through
 	// harness.QueryInput.OnToolResult. Nil for ordinary tools.
 	Data any
+	// ErrorCode classifies an IsError result for hosts, hooks and the
+	// transcript (llm.ContentBlock.ToolError). The model never sees it. A tool
+	// that returns an error from Call needs no code here: the harness takes the
+	// error's own (llm.CodeOf). Empty leaves the result unclassified.
+	ErrorCode llm.Code
 }
+
+// Codes the harness assigns to tool calls that fail before or around the tool
+// itself. A failure inside the tool carries the code of the error it returned,
+// or llm.CodeUnknown.
+const (
+	CodeUnknownTool      llm.Code = "unknown_tool"      // no tool by that name
+	CodeInvalidInput     llm.Code = "invalid_input"     // arguments failed the input schema
+	CodePermissionDenied llm.Code = "permission_denied" // the permission pipeline did not allow the call
+	CodeHookBlocked      llm.Code = "hook_blocked"      // a PreToolUse hook blocked the call
+	CodeToolUnavailable  llm.Code = "tool_unavailable"  // the tool is switched off for this phase of the run
+	CodeInterrupted      llm.Code = "interrupted"       // the call was cut off before it finished
+)
 
 // Text builds a successful text result.
 func Text(s string) Result { return Result{Content: []llm.ContentBlock{llm.TextBlock(s)}} }

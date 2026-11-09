@@ -221,7 +221,7 @@ func NewProvider(cfg Config) (Provider, error) {
 		}
 		return &openaiResponsesProvider{cfg: cfg}, nil
 	default:
-		return nil, fmt.Errorf("llm: unknown format %q (use anthropic, openai or openai-responses)", cfg.Format)
+		return nil, NewError(CodeInvalidConfig, fmt.Sprintf("llm: unknown format %q (use anthropic, openai or openai-responses)", cfg.Format))
 	}
 }
 
@@ -238,14 +238,14 @@ func defaultHTTPClient(proxy string) (*http.Client, error) {
 	}
 	u, err := url.Parse(proxy)
 	if err != nil {
-		return nil, fmt.Errorf("llm: invalid proxy %q: %w", proxy, err)
+		return nil, WrapError(CodeInvalidConfig, fmt.Sprintf("llm: invalid proxy %q", proxy), err)
 	}
 	switch u.Scheme {
 	case "http", "https", "socks5": // supported by net/http's Transport.Proxy
 	case "":
-		return nil, fmt.Errorf("llm: proxy %q missing scheme (use http://, https:// or socks5://)", proxy)
+		return nil, NewError(CodeInvalidConfig, fmt.Sprintf("llm: proxy %q missing scheme (use http://, https:// or socks5://)", proxy))
 	default:
-		return nil, fmt.Errorf("llm: unsupported proxy scheme %q (use http, https or socks5)", u.Scheme)
+		return nil, NewError(CodeInvalidConfig, fmt.Sprintf("llm: unsupported proxy scheme %q (use http, https or socks5)", u.Scheme))
 	}
 	tr.Proxy = http.ProxyURL(u)
 	return &http.Client{Transport: tr}, nil
