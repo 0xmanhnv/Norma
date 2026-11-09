@@ -8,10 +8,13 @@ import (
 	"strings"
 )
 
-var refPattern = regexp.MustCompile(`^m0*(\d{1,5})$`)
+// refPattern accepts up to seven significant digits (MaxRefIndex = 9,999,999)
+// and any number of leading zeros, so m1 == m00001 and m0100000 == m100000.
+var refPattern = regexp.MustCompile(`^m0*(\d{1,7})$`)
 
-// IndexToRef renders a 1-based index as mNNNNN. Out-of-range input is a
-// programming error and yields "".
+// IndexToRef renders a 1-based index as mNNNNN: zero-padded to five digits,
+// wider above 99,999 (m100000). Out-of-range input is a programming error and
+// yields "".
 func IndexToRef(index int) string {
 	if index < MinRefIndex || index > MaxRefIndex {
 		return ""

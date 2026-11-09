@@ -23,6 +23,12 @@ import (
 // The regexes anchor on BOTH the element name and the id format. Matching the
 // name alone would let a <noa-ref> appearing inside a file the agent read be
 // stripped out of that file's content.
+// canonicalRef matches exactly what noa.IndexToRef renders.
+//
+// Ported from acp-kernel (MIT plus Additional Term, Copyright (c) 2026
+// ranxianglei): src/ccr.ts, CANONICAL_REF — 83b8609 (v0.0.100, acp-kernel#483).
+const canonicalRef = `m(?:\d{5}|[1-9]\d{5,6})`
+
 var (
 	// Only the TRAILING form is stripped, because only the trailing form is ever
 	// produced (see AppendRefTag). Stripping a leading one as well would defend
@@ -35,8 +41,12 @@ var (
 	// AppendRefTag inserts. A greedy `\n*` would also swallow a newline the body
 	// itself ended with, so tagging and stripping would not round-trip and the
 	// content would quietly change.
-	trailingTagRE = regexp.MustCompile(`(?:^|\n)<noa-ref\s+id="m\d{5}"[^>]*/>\s*$`)
-	anyRefTagRE   = regexp.MustCompile(`<noa-ref\s+id="(m\d{5})"[^>]*/>`)
+	//
+	// The id must be a CANONICAL ref rendering — five zero-padded digits, or
+	// six to seven with no leading zero (m100000 .. m9999999, see noa.RefWidth)
+	// — so tag-shaped text with any other id is content and stays.
+	trailingTagRE = regexp.MustCompile(`(?:^|\n)<noa-ref\s+id="` + canonicalRef + `"[^>]*/>\s*$`)
+	anyRefTagRE   = regexp.MustCompile(`<noa-ref\s+id="(` + canonicalRef + `)"[^>]*/>`)
 )
 
 // StripRefTag removes the ref tag from the end of a body.

@@ -94,9 +94,15 @@ covered by the license below, which is upstream's `LICENSE` as of v0.0.98 (commi
   (`src/compress.ts`, nudgeNode; `a587c0c`, v0.0.99).
 - `noa/parseinput.go` — single entry object in the `content` field
   (`src/parse-compress-input.ts`; `afa1c54`, v0.0.98).
+- `noa/const.go`, `noa/refs.go`, `noa/compress.go` — ref capacity widened to
+  9,999,999 with hybrid widths (`src/refs.ts`, `src/boundaries.ts`; `83b8609`,
+  v0.0.100).
+- `noaadapter/tags.go` — canonical widened ref form in the tag regexes
+  (`src/ccr.ts`, `CANONICAL_REF`; `83b8609`); tests in
+  `noaadapter/refwidth_test.go`.
 - `noa/upstream_v098_test.go` — tests adapted from `tests/nudge.test.ts`,
-  `tests/protect-recent.test.ts` (`2cc21fa`, v0.0.100) and
-  `tests/parse-compress-input.test.ts`.
+  `tests/protect-recent.test.ts` (`2cc21fa`, v0.0.100),
+  `tests/parse-compress-input.test.ts` and `tests/refs.test.ts`.
 
 The license text, verbatim (English and Chinese):
 
