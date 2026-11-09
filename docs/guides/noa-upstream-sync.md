@@ -153,6 +153,7 @@ No configuration default changed.
 |---|---|
 | #20 | Bug fixes and rules sync (first table above), this document, `NOA_UPSTREAM_DIR`. |
 | #21 | `Config.NeverPreserveRecentTools`, `Config.PreserveRecentTools`, `Config.ProtectedLatestTools`. All default to the previous behaviour. |
+| #22 | `ParseCompressArgs` salvages single-quoted arguments and repairs control characters / invalid escapes at the decoder's error offset (`Diagnostics.QuoteSalvage`). Also corrects #20's `RawPrefix`: it is capped at 800 **bytes** again (as the fuzz invariant requires), cut at a character boundary. |
 
 `ProtectedLatestTools` deviates in one detail: upstream gives the latest instance a
 `BLOCKED` ref, as it does for hard-protected tools. `noa` leaves it addressable and
