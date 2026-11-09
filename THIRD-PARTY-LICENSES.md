@@ -97,6 +97,9 @@ covered by the license below, which is upstream's `LICENSE` as of v0.0.98 (commi
 - `noa/const.go`, `noa/refs.go`, `noa/compress.go` — ref capacity widened to
   9,999,999 with hybrid widths (`src/refs.ts`, `src/boundaries.ts`; `83b8609`,
   v0.0.100).
+- `noa/prune.go` — `buildAnchorPairingIndex`, built once per prune pass
+  (`src/prune.ts`; `78df864`, v0.0.101); tests in `noa/prune_scale_test.go`
+  adapted from `tests/prune-recommend-scale.test.ts`.
 - `noaadapter/tags.go` — canonical widened ref form in the tag regexes
   (`src/ccr.ts`, `CANONICAL_REF`; `83b8609`); tests in
   `noaadapter/refwidth_test.go`.

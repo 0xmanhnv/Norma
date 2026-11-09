@@ -110,6 +110,7 @@ func prune(io NodeIO, _ PipelineContext) NodeIO {
 	var anchors []anchor
 	anchoredSummaryIDs := map[string]bool{}
 
+	pairing := buildAnchorPairingIndex(io.Messages)
 	for _, b := range ActiveBlocks(io.State) {
 		insertAt := 0
 		if i, ok := indexOf[SummaryMessageID(b.BlockID)]; ok {
@@ -129,7 +130,7 @@ func prune(io NodeIO, _ PipelineContext) NodeIO {
 			}
 		}
 		n, _ := strconv.Atoi(strings.TrimPrefix(b.BlockID, "b"))
-		anchors = append(anchors, anchor{insertAt: pairSafeAnchorIndex(io.Messages, insertAt), block: b, blockNum: n})
+		anchors = append(anchors, anchor{insertAt: pairSafeAnchorIndex(io.Messages, insertAt, pairing), block: b, blockNum: n})
 	}
 
 	// Stable order: by insertion point, then by block number so two blocks
@@ -195,14 +196,55 @@ func prune(io NodeIO, _ PipelineContext) NodeIO {
 // covered core between two visible ones is dropped, and the runs then merge.
 //
 // Ported from acp-kernel (MIT, Copyright © 2026 ranxianglei): src/prune.ts,
-// pairSafeAnchorIndex.
-func pairSafeAnchorIndex(msgs []CoreMessage, index int) int {
+// pairSafeAnchorIndex. The index-based form is 78df864 (v0.0.101, MIT plus
+// Additional Term); see anchorPairingIndex.
+func pairSafeAnchorIndex(msgs []CoreMessage, index int, ix anchorPairingIndex) int {
+	n := len(msgs)
 	safe := index
-	for safe > 0 && safe < len(msgs) &&
-		msgs[safe-1].Role == RoleAssistant && msgs[safe].Role == RoleAssistant {
-		safe--
+	if safe > 0 && safe < n && msgs[safe-1].Role == RoleAssistant {
+		if start := ix.runStart[safe]; start >= 0 {
+			safe = start
+		}
 	}
+	// Outside [0, n] there is no prefix to scan; the full scan returned such
+	// an index unchanged as well.
+	if safe < 0 || safe > n {
+		return safe
+	}
+	// Each move lands just past a result, so this reaches a fixed point; the
+	// bound only guards against a malformed list. A call whose result ends at
+	// or before safe contributes at most safe and is absorbed by the max, so
+	// the unfiltered prefix maximum agrees with scanning only results >= safe.
+	for range n {
+		next := max(safe, ix.prefixEnd[safe])
+		if next == safe {
+			break
+		}
+		safe = next
+	}
+	return safe
+}
 
+// anchorPairingIndex is what pairSafeAnchorIndex needs, built once per prune
+// pass. Rebuilding it for every anchor made prune O(blocks x messages), which
+// a long session with hundreds of blocks pays on every request.
+//
+// Ported from acp-kernel (MIT plus Additional Term, Copyright (c) 2026
+// ranxianglei): src/prune.ts, buildAnchorPairingIndex — 78df864 (v0.0.101,
+// acp-kernel#498).
+type anchorPairingIndex struct {
+	// runStart[i] is the start of the assistant run containing i, or -1 when
+	// msgs[i] is not an assistant message.
+	runStart []int
+	// prefixEnd[i] is the farthest (first result index + 1) over the assistant
+	// tool calls at positions < i; 0 when there are none. Length n+1.
+	prefixEnd []int
+}
+
+func buildAnchorPairingIndex(msgs []CoreMessage) anchorPairingIndex {
+	n := len(msgs)
+	// A duplicate call id can appear on several results; the earliest one is
+	// the pairing boundary.
 	resultIndex := map[string]int{}
 	for i, m := range msgs {
 		if m.ContentType == CTToolResult && m.ToolCallID != "" {
@@ -211,25 +253,35 @@ func pairSafeAnchorIndex(msgs []CoreMessage, index int) int {
 			}
 		}
 	}
-	// Each move lands just past a result, so this reaches a fixed point; the
-	// bound only guards against a malformed list.
-	for range len(msgs) {
-		moved := safe
-		for i := 0; i < safe && i < len(msgs); i++ {
-			m := msgs[i]
-			if m.Role != RoleAssistant || m.ContentType != CTToolCall || m.ToolCallID == "" {
-				continue
-			}
-			if ri, ok := resultIndex[m.ToolCallID]; ok && ri >= safe && ri+1 > moved {
-				moved = ri + 1
-			}
+
+	runStart := make([]int, n)
+	for i := 0; i < n; {
+		if msgs[i].Role != RoleAssistant {
+			runStart[i] = -1
+			i++
+			continue
 		}
-		if moved == safe {
-			break
+		j := i
+		for j+1 < n && msgs[j+1].Role == RoleAssistant {
+			j++
 		}
-		safe = moved
+		for k := i; k <= j; k++ {
+			runStart[k] = i
+		}
+		i = j + 1
 	}
-	return safe
+
+	prefixEnd := make([]int, n+1)
+	for i, m := range msgs {
+		end := 0
+		if m.Role == RoleAssistant && m.ContentType == CTToolCall && m.ToolCallID != "" {
+			if ri, ok := resultIndex[m.ToolCallID]; ok {
+				end = ri + 1
+			}
+		}
+		prefixEnd[i+1] = max(prefixEnd[i], end)
+	}
+	return anchorPairingIndex{runStart: runStart, prefixEnd: prefixEnd}
 }
 
 // stripOrphanedToolCalls drops a tool call whose result is gone.
