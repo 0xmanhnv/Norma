@@ -34,6 +34,8 @@ architecture overview or a per-subsystem guide.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — big picture, package map, the agent loop, the
   permission pipeline, compaction, subagents, the event model, and transcript/resume,
   with verified Mermaid diagrams.
+- [CAPABILITIES.md](CAPABILITIES.md) — the capability matrix: what Norma can do, which
+  package owns it, and how to turn it on.
 
 ## Subsystem guides
 
