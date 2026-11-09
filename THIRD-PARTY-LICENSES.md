@@ -32,6 +32,9 @@ for the per-change record. The synced paths, with the upstream file each derives
   `NeverPreserveRecentTools` / `PreserveRecentTools` / `ProtectedLatestTools` knobs
   (`src/protected.ts`, `src/types.ts`); tests in `noa/protection_knobs_test.go`
   adapted from `tests/protected-latest.test.ts`.
+- `noa/parseinput.go` — `normalizeSingleQuotes` and `repairAtParserPositions`
+  (`src/parse-compress-input.ts`); tests in `noa/parse_salvage_test.go` adapted from
+  `tests/basic.test.ts` and `tests/parse-compress-input.test.ts`.
 - `noa/prompts_rules.go` — the rule constants, synced to v0.0.97
   (`src/compression-rules.ts`).
 - `noa/upstream_sync_test.go` — regression tests adapted from acp-kernel's

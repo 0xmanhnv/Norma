@@ -2,8 +2,12 @@ package noa
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"regexp"
+	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // CompressParseKind classifies why parsing ended the way it did. The kind is
@@ -36,7 +40,8 @@ type CompressParseDiagnostics struct {
 	Kind           CompressParseKind
 	InvalidItems   int
 	InvalidReasons []string
-	// RawPrefix is the first 800 characters of the raw input, for logs.
+	// RawPrefix is at most the first 800 bytes of the raw input, cut at a
+	// character boundary, for logs.
 	RawPrefix string
 	Length    int
 	Keys      []string
@@ -44,6 +49,9 @@ type CompressParseDiagnostics struct {
 	Salvaged bool
 	// TailRepaired marks output fixed by appending a missing closing brace.
 	TailRepaired bool
+	// QuoteSalvage marks output recovered by rewriting single-quoted JSON
+	// into double-quoted JSON.
+	QuoteSalvage bool
 }
 
 // CompressParseResult is the parsed call.
@@ -66,7 +74,7 @@ func ParseCompressArgs(raw []byte) CompressParseResult {
 	res := CompressParseResult{}
 	d := &res.Diagnostics
 	d.Length = len(raw)
-	d.RawPrefix = clampRunes(string(raw), rawPrefixLen)
+	d.RawPrefix = clampBytes(string(raw), rawPrefixLen)
 
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
@@ -83,6 +91,30 @@ func ParseCompressArgs(raw []byte) CompressParseResult {
 	}
 	body = stripFence(body)
 
+	res = parseBody(body, res)
+	// Weak models emit single-quoted arguments ({'content': [...]}), which no
+	// layer above recognises — the truncation salvage only knows a
+	// double-quoted "content". Retry once with the quotes normalised. The retry
+	// is adopted only when it recovers strictly more ranges, so well-formed
+	// input is never rewritten and a tie keeps the first diagnostics.
+	if len(res.Ranges) == 0 || res.Diagnostics.InvalidItems > 0 {
+		if normalized, changed := normalizeSingleQuotes(body); changed {
+			retry := parseBody(normalized, CompressParseResult{Diagnostics: CompressParseDiagnostics{
+				Length: d.Length, RawPrefix: d.RawPrefix,
+			}})
+			if len(retry.Ranges) > len(res.Ranges) {
+				retry.Diagnostics.QuoteSalvage = true
+				return retry
+			}
+		}
+	}
+	return res
+}
+
+// parseBody runs the structural layers over an unwrapped body. res carries the
+// diagnostics gathered so far.
+func parseBody(body string, res CompressParseResult) CompressParseResult {
+	d := &res.Diagnostics
 	obj, ok := tryParseLenient(body)
 	if !ok {
 		// Layer 6: salvage whole entries by bracket matching. This is what
@@ -150,6 +182,17 @@ func decodeContent(rawContent any, d *CompressParseDiagnostics) ([]map[string]an
 		if entries, ok := salvageContentEntries(s); ok {
 			d.Salvaged = true
 			return entries, ParseOK
+		}
+		// A single-quoted array inside a well-formed wrapper.
+		if normalized, changed := normalizeSingleQuotes(s); changed {
+			if arr, ok := tryParseLenientArray(normalized); ok && len(arr) > 0 {
+				d.QuoteSalvage = true
+				return toEntryMaps(arr), ParseOK
+			}
+			if entries, ok := salvageContentEntries(normalized); ok {
+				d.QuoteSalvage, d.Salvaged = true, true
+				return entries, ParseOK
+			}
 		}
 		return nil, ParseContentNotList
 	default:
@@ -232,6 +275,11 @@ func tryParseLenient(s string) (map[string]any, bool) {
 	if json.Unmarshal([]byte(escapeRawNewlinesInStrings(stripTrailingCommas(s))), &obj) == nil {
 		return obj, true
 	}
+	if fixed, changed := repairAtParserPositions(stripTrailingCommas(s)); changed {
+		if json.Unmarshal([]byte(fixed), &obj) == nil {
+			return obj, true
+		}
+	}
 	return nil, false
 }
 
@@ -245,6 +293,11 @@ func tryParseLenientArray(s string) ([]any, bool) {
 	}
 	if json.Unmarshal([]byte(escapeRawNewlinesInStrings(s)), &arr) == nil {
 		return arr, true
+	}
+	if fixed, changed := repairAtParserPositions(stripTrailingCommas(s)); changed {
+		if json.Unmarshal([]byte(fixed), &arr) == nil {
+			return arr, true
+		}
 	}
 	return nil, false
 }
@@ -436,15 +489,164 @@ func intField(m map[string]any, key string) *int {
 	return nil
 }
 
-// clampRunes keeps at most n characters of s. Cutting by byte could split a
-// multi-byte character and leave invalid UTF-8 in the diagnostics.
-func clampRunes(s string, n int) string {
-	i := 0
-	for pos := range s {
-		if i == n {
-			return s[:pos]
-		}
-		i++
+// clampBytes keeps at most n bytes of s, backing off to a character boundary.
+// A plain byte cut could split a multi-byte character and leave invalid UTF-8
+// in the diagnostics.
+func clampBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return s
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+// repairAtParserPositions fixes control characters and invalid escapes exactly
+// where the JSON decoder reports them, one at a time, until the input parses or
+// the error is of any other kind.
+//
+// The hand-rolled string-state passes above can be misled: an unescaped inner
+// quote or a markdown backslash (\`, \-) flips their idea of what is inside a
+// string. The decoder's own error offset cannot be misled that way. Compound
+// damage — raw newlines AND bad escapes in one summary — takes several rounds;
+// the cap bounds a pathological input.
+//
+//   - a raw control character in a string becomes its escape (\n, \r, \t,
+//     \u00XX);
+//   - an invalid escape gets its backslash doubled, so the value keeps the
+//     backslash literally.
+//
+// Any other syntax error is left alone: structure is never invented.
+//
+// Ported from acp-kernel (MIT, Copyright © 2026 ranxianglei):
+// src/parse-compress-input.ts, repairAtParserPositions. Upstream parses the
+// position out of the error message; Go reports it as SyntaxError.Offset, the
+// count of bytes read before the error.
+func repairAtParserPositions(s string) (string, bool) {
+	cur := []byte(s)
+	changed := false
+	for range 500 {
+		var v any
+		err := json.Unmarshal(cur, &v)
+		if err == nil {
+			break
+		}
+		var se *json.SyntaxError
+		if !errors.As(err, &se) || se.Offset < 1 || se.Offset > int64(len(cur)) {
+			break
+		}
+		at := int(se.Offset) - 1
+		if c := cur[at]; c < 0x20 {
+			cur = slices.Concat(cur[:at:at], []byte(controlEscape(c)), cur[at+1:])
+			changed = true
+			continue
+		}
+		if !strings.Contains(se.Error(), "escape") {
+			break
+		}
+		// The offending escape starts at the nearest backslash before the
+		// offset; \uXXXX is the longest escape, so it is at most six back.
+		b := -1
+		for i := at; i >= 0 && i >= at-6; i-- {
+			if cur[i] == '\\' {
+				b = i
+				break
+			}
+		}
+		if b < 0 {
+			break
+		}
+		cur = slices.Concat(cur[:b:b], []byte(`\\`), cur[b+1:])
+		changed = true
+	}
+	return string(cur), changed
+}
+
+func controlEscape(c byte) string {
+	switch c {
+	case '\n':
+		return `\n`
+	case '\r':
+		return `\r`
+	case '\t':
+		return `\t`
+	}
+	return fmt.Sprintf(`\u%04x`, c)
+}
+
+// normalizeSingleQuotes rewrites single-quoted JSON strings as double-quoted
+// ones. Apostrophes inside double-quoted strings are data and are copied as
+// they are; inside a single-quoted region a double quote is escaped, \' becomes
+// a plain apostrophe, and raw control characters become escapes.
+//
+// It is pure text repair and never invents structure: whatever it cannot turn
+// into valid JSON simply stays unrecovered. changed is false when there was
+// nothing to rewrite.
+//
+// Ported from acp-kernel (MIT, Copyright © 2026 ranxianglei):
+// src/parse-compress-input.ts, normalizeSingleQuotes.
+func normalizeSingleQuotes(raw string) (string, bool) {
+	if !strings.Contains(raw, "'") || !strings.ContainsAny(raw, "{[") {
+		return raw, false
+	}
+	var b strings.Builder
+	b.Grow(len(raw) + 16)
+	changed := false
+	inDouble, inSingle := false, false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case inDouble:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(raw) {
+				i++
+				b.WriteByte(raw[i])
+			} else if c == '"' {
+				inDouble = false
+			}
+		case inSingle:
+			switch c {
+			case '\\':
+				if i+1 < len(raw) {
+					i++
+					if raw[i] == '\'' {
+						b.WriteByte('\'')
+					} else {
+						b.WriteByte('\\')
+						b.WriteByte(raw[i])
+					}
+				} else {
+					b.WriteByte(c)
+				}
+			case '\'':
+				b.WriteByte('"')
+				inSingle = false
+			case '"':
+				b.WriteString(`\"`)
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			default:
+				b.WriteByte(c)
+			}
+		case c == '"':
+			inDouble = true
+			b.WriteByte(c)
+		case c == '\'':
+			inSingle = true
+			changed = true
+			b.WriteByte('"')
+		default:
+			b.WriteByte(c)
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+	return b.String(), true
 }

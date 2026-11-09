@@ -556,12 +556,13 @@ func TestGentleNudgeTipDoesNotDemandEveryRange(t *testing.T) {
 // --- diagnostics -----------------------------------------------------------
 
 func TestRawPrefixIsValidUTF8(t *testing.T) {
-	raw := strings.Repeat("é", rawPrefixLen+50)
+	// An odd prefix puts the 800-byte cut in the middle of a two-byte "é".
+	raw := "x" + strings.Repeat("é", rawPrefixLen)
 	d := ParseCompressArgs([]byte(raw)).Diagnostics
 	if !utf8.ValidString(d.RawPrefix) {
 		t.Fatal("RawPrefix split a multi-byte character")
 	}
-	if utf8.RuneCountInString(d.RawPrefix) != rawPrefixLen {
-		t.Fatalf("RawPrefix has %d characters, want %d", utf8.RuneCountInString(d.RawPrefix), rawPrefixLen)
+	if len(d.RawPrefix) > rawPrefixLen || len(d.RawPrefix) < rawPrefixLen-3 {
+		t.Fatalf("RawPrefix is %d bytes, want the 800-byte cap backed off to a character boundary", len(d.RawPrefix))
 	}
 }
