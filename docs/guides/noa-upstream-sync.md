@@ -1,6 +1,6 @@
 # noa upstream sync
 
-> Packages `noa` / `noaadapter` · upstream: [acp-kernel](https://github.com/ranxianglei/acp-kernel) (MIT)
+> Packages `noa` / `noaadapter` · upstream: [acp-kernel](https://github.com/ranxianglei/acp-kernel) (MIT; MIT plus an attribution term from v0.0.98)
 
 `noa` is a Go port of acp-kernel's compression core. This page records where the port
 was taken from, everything upstream changed since, and what Norma did about each
@@ -13,7 +13,8 @@ and walk forward.
 |---|---|---|---|
 | Port baseline | `4e6269d` (v0.0.69) | 2026-09-13 | Upstream `master` when `noa` landed (2026-09-14). |
 | Rule constants at port | `17bf3fe` | 2026-09-06 | `src/compression-rules.ts` was unchanged from here to `1c0e579^`; `noa/prompts_rules.go` byte-matched it, modulo the documented deviations. |
-| Pinned now | `1d42ec2` (v0.0.97) | 2026-09-27 | Last upstream commit before the license gained an extra term (see below). The four rule constants are byte-identical from here through v0.0.101. |
+| Rule constants pinned | `1d42ec2` (v0.0.97) | 2026-09-27 | `UpstreamRulesCommit` in `noa/prompts_rules_test.go`. The four rule constants are byte-identical from here through v0.0.101 (`5aa1a10`), so the pin did not move with #24–#26. |
+| Synced through | `5aa1a10` (v0.0.101) | 2026-10-03 | Every change up to here is decided below. Start the next sync from this commit. |
 | Upstream head reviewed | `5aa1a10` (v0.0.101) | 2026-10-03 | 679 commits. |
 
 How the baseline was established: `noa/prompts_rules_test.go` compares the ported
@@ -88,7 +89,7 @@ license term was accepted in #23, then re-decided — see the sync log).
 | `ab9c229`, `f8a8885` (09-27) | Re-mint live ids that collide with a folded copy. | N/A — the occurrence counter already gives a repeated message its own id. | — | Skip. |
 | `a587c0c` (09-28, v0.0.99) | Re-anchor nudge cadence when the count drops below the shown reference. | No. | Medium / small / low. | **Ported** (#24): `stampNudge` re-anchors when the count falls a full growth step below `LastNudgeShownTokens` as well as below the baseline. |
 | `2cc21fa` (09-30, v0.0.100) | Case-insensitive protected tool names. | Yes — `MatchToolPattern` already lowercased both sides, so every knob built on it (`ProtectedTools`, `ProtectedLatestTools`, the recent-zone lists) matched across casings. | Low. | **Tests ported** (#24); no code change. `AlwaysProtectedTools` stays an exact match on Norma's `Compress`, as upstream's always-protected list does. |
-| `78df864` (10-02) | Build prune/recommend indexes once per turn (performance). | No. | Low-medium. | Blocked: license term. |
+| `78df864` (10-02, v0.0.101) | Build prune/recommend indexes once per turn (performance). | Half — `noa`'s recommend already built the covered-id set once per call; prune rebuilt the anchor-pairing scan for every block (O(blocks × messages)). | Low-medium / small / low. | **Ported** (#26): `buildAnchorPairingIndex` once per prune pass. Output is identical — a differential test checks it against the old full scan on 3,000 random histories. |
 | `79f1cba` (09-29, v0.0.99) | Linear-time line-form split. | N/A (no line form yet). | — | Port later, with the line form. |
 
 **Deviation from `6996cf6`.** Upstream closes a batch at any positional gap, which
@@ -171,6 +172,11 @@ From #25:
   unaffected; message 100,000 and later get m100000 … instead of no ref. Code that
   compares refs as strings must switch to `RefToIndex` — m100000 sorts before m99999.
 
+From #26:
+
+- **Prune is linear in the history.** No output change; long sessions with many
+  blocks spend less time per request.
+
 ## Sync log
 
 | PR | Scope |
@@ -181,6 +187,7 @@ From #25:
 | #23 | Accepted acp-kernel's post-v0.0.98 license term: README attribution, `THIRD-PARTY-LICENSES.md`, `CONTRIBUTING.md`. |
 | #24 | First v0.0.98+ fixes: nudge re-anchor on the shown reference (`a587c0c`), single-object `content` salvage (`afa1c54`), case-insensitive tool-name tests (`2cc21fa`). Tests in `noa/upstream_v098_test.go`. |
 | #25 | Ref capacity widened to 9,999,999 (`83b8609`). |
+| #26 | Prune builds its anchor-pairing index once per pass (`78df864`). Nothing from v0.0.98–v0.0.101 is left blocked; the rest is *port later* or *skip* above. |
 
 `ProtectedLatestTools` deviates in one detail: upstream gives the latest instance a
 `BLOCKED` ref, as it does for hard-protected tools. `noa` leaves it addressable and
