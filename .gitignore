@@ -11,9 +11,6 @@
 .agents/
 .playwright-mcp/
 
-# Local docs / analysis notes
-docs/
-
 # Build outputs
 bin/
 dist/
