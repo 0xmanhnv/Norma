@@ -313,14 +313,27 @@ func nudgeInjectNode() PipelineNode {
 // stampNudge updates the pacing baselines. The order matters: a re-anchor must
 // happen before the first-time initialisation, or a collapsed context would be
 // initialised to its new size and then immediately re-anchored to it again.
+//
+// The re-anchor also fires when the count falls a full growth step below the
+// last SHOWN reference, not only below the baseline. DecideNudge measures growth
+// from LastNudgeShownTokens whenever it is set, so a nudge stamped at an
+// overestimated count (an estimate that later settles lower) would otherwise
+// hold every growth-gated nudge off until the context regrew past that phantom
+// level — with the count still above baseline-g, the baseline test never fires.
+//
+// Ported from acp-kernel (MIT plus Additional Term, Copyright (c) 2026
+// ranxianglei): src/compress.ts, nudgeNode — the shown-reference clause is
+// a587c0c (v0.0.99, acp-kernel#478).
 func stampNudge(state *CompressionState, cfg Config, tokenCount int, d NudgeDecision) {
 	baseline := state.Nudge.LastPerMessageNudgeTokens
+	shown := state.Nudge.LastNudgeShownTokens
 	g := resolveAdaptiveGrowth(cfg.ModelContextLimit, cfg.Nudge)
 
 	// The context collapsed by a full growth step — a compression landed, or the
-	// host trimmed history. Comparing against the old baseline would report
-	// negative growth forever, so re-anchor to the new scale.
-	if baseline > 0 && tokenCount < baseline-g {
+	// host trimmed history, or an overestimated count settled. Comparing against
+	// the old reference would report negative growth forever, so re-anchor to
+	// the new scale.
+	if (baseline > 0 && tokenCount < baseline-g) || (shown > 0 && tokenCount < shown-g) {
 		state.Nudge.LastPerMessageNudgeTokens = tokenCount
 		state.Nudge.LastNudgeShownTokens = 0
 		state.Nudge.LastShownByTier = map[Tier]int{}
