@@ -124,3 +124,8 @@ Norma is a maintained fork of **[Autumn-27/norma](https://github.com/Autumn-27/n
 ## License
 
 Apache License 2.0 — see [`LICENSE`](LICENSE). Copyright 2026 Autumn-27.
+
+Norma also bundles source derived from third-party work under its own license: the
+`noa` / `noaadapter` compression engine is ported from acp-kernel (MIT). The required
+notice and full MIT license text are listed in
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).

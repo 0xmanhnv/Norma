@@ -13,6 +13,10 @@ Norma is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/nor
 - Releases are tagged `v0.4.4-p.N`.
 - Keep the upstream copyright and `LICENSE` intact. Norma is Apache-2.0; contributions
   are accepted under the same license.
+- Preserve third-party notices. Some paths are derived from other projects under their
+  own license (e.g. `noa` / `noaadapter`, ported from acp-kernel under the MIT License).
+  Keep their in-source attribution comments intact, and if you add or extend such code,
+  record it in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
 
 ## Prerequisites
 

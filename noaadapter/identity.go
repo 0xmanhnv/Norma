@@ -2,7 +2,8 @@
 // llm.Message into noa's flat representation and back, persists state and
 // archives, and exposes the Compress tool.
 //
-// See docs/noa-实施方案.md for the specification.
+// See docs/guides/compaction.md for the design. The noa and noaadapter packages
+// are derived from acp-kernel (MIT); see THIRD-PARTY-LICENSES.md at the repo root.
 package noaadapter
 
 import (
