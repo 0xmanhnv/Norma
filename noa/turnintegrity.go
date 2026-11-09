@@ -72,6 +72,10 @@ func ComputeTurnGroups(msgs []CoreMessage) []TurnGroup {
 // is the conservative repair — the range simply compresses a little less.
 //
 // Returns the surviving set and the indices withdrawn.
+//
+// This checks the turn invariant only. A fold must also never split a tool
+// call from its result; ComputeIntegrityWithdrawals enforces both invariants
+// together and is what compression and the recommendation use.
 func WithdrawSplitTurns(msgs []CoreMessage, folded map[string]bool) (map[string]bool, []string) {
 	if len(folded) == 0 {
 		return folded, nil
@@ -112,4 +116,123 @@ func WithdrawSplitTurns(msgs []CoreMessage, folded map[string]bool) (map[string]
 		}
 	}
 	return out, withdrawn
+}
+
+// IntegrityWithdrawals is the fold-integrity verdict for a set of ids about to
+// be folded: which of them must stay visible instead, and how many turns and
+// tool call/result pairs that protects.
+type IntegrityWithdrawals struct {
+	// Withdrawn holds only ids that were in the folded set.
+	Withdrawn      map[string]bool
+	SplitTurnCount int
+	SplitPairCount int
+}
+
+// ComputeIntegrityWithdrawals is the fold-integrity gate. Given the ids a fold
+// removes from the visible stream, it returns the ids that must stay visible.
+//
+// Two invariants, and they feed each other:
+//
+//   - a kept assistant tool call keeps its reasoning run, so a turn whose
+//     reasoning folds while one of its calls stays visible is withdrawn whole;
+//   - a tool call and its result are one exchange, so a pair the fold would
+//     split is withdrawn together. A visible call whose result folded is an
+//     unanswered tool_call_id, a visible result whose call folded answers
+//     nothing, and strict providers reject both.
+//
+// Withdrawing a call for the pair invariant can leave a turn whose reasoning
+// still folds while its call is now visible — exactly what the turn invariant
+// forbids — and withdrawing a turn can strand a result whose call lived outside
+// it. One pass in a fixed order misses both, so the gate repeats until nothing
+// changes. Each turn and each pair is acted on, and counted, once.
+//
+// The reverse split stays legal: reasoning and text may stay visible while a
+// whole call/result pair folds, because that still leaves a valid stream.
+//
+// folded is not modified.
+//
+// Ported from acp-kernel (MIT, Copyright © 2026 ranxianglei):
+// src/turn-integrity.ts, computeIntegrityWithdrawals.
+func ComputeIntegrityWithdrawals(msgs []CoreMessage, folded map[string]bool) IntegrityWithdrawals {
+	out := IntegrityWithdrawals{Withdrawn: map[string]bool{}}
+	if len(folded) == 0 {
+		return out
+	}
+	remaining := make(map[string]bool, len(folded))
+	maps.Copy(remaining, folded)
+
+	resultByCallID := map[string]string{}
+	for _, m := range msgs {
+		if m.ID != "" && m.ContentType == CTToolResult && m.ToolCallID != "" {
+			if _, seen := resultByCallID[m.ToolCallID]; !seen {
+				resultByCallID[m.ToolCallID] = m.ID
+			}
+		}
+	}
+
+	groups := ComputeTurnGroups(msgs)
+	handledTurns := map[int]bool{}
+	handledPairs := map[string]bool{}
+	withdraw := func(id string) {
+		if remaining[id] {
+			delete(remaining, id)
+			out.Withdrawn[id] = true
+		}
+	}
+
+	for changed := true; changed; {
+		changed = false
+
+		for gi, g := range groups {
+			if handledTurns[gi] || len(g.ReasoningIdx) == 0 {
+				continue
+			}
+			reasoningFolds := false
+			for _, i := range g.ReasoningIdx {
+				if remaining[msgs[i].ID] {
+					reasoningFolds = true
+					break
+				}
+			}
+			if !reasoningFolds {
+				continue
+			}
+			callKept := false
+			for _, i := range g.ActIdx {
+				if msgs[i].ContentType == CTToolCall && msgs[i].ID != "" && !remaining[msgs[i].ID] {
+					callKept = true
+					break
+				}
+			}
+			if !callKept {
+				continue
+			}
+			handledTurns[gi] = true
+			for _, i := range g.indices() {
+				withdraw(msgs[i].ID)
+			}
+			changed = true
+		}
+
+		for _, m := range msgs {
+			if m.ID == "" || m.Role != RoleAssistant || m.ContentType != CTToolCall || m.ToolCallID == "" {
+				continue
+			}
+			if handledPairs[m.ToolCallID] {
+				continue
+			}
+			rid, ok := resultByCallID[m.ToolCallID]
+			if !ok || remaining[m.ID] == remaining[rid] {
+				continue
+			}
+			handledPairs[m.ToolCallID] = true
+			withdraw(m.ID)
+			withdraw(rid)
+			changed = true
+		}
+	}
+
+	out.SplitTurnCount = len(handledTurns)
+	out.SplitPairCount = len(handledPairs)
+	return out
 }

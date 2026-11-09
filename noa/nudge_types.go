@@ -19,6 +19,19 @@ type RangeInfo struct {
 	UserMsgs int
 	// Dangerous marks a span the model should not compress without certainty.
 	Dangerous bool
+
+	// StartIndex and EndIndex are the positions of the span's first and last
+	// message in the view it was built from; Positioned says they are set.
+	// Ranges are ordered and merged for display by position, never by ref number:
+	// refs need not be monotonic in view order, and a span merged by number can
+	// resolve to a much smaller slice than the one displayed. Hand-built ranges
+	// leave Positioned false and fall back to ref order.
+	StartIndex int
+	EndIndex   int
+	Positioned bool
+	// BlockBefore marks that an active block lies between this span and the
+	// previous one. Batching never bridges it.
+	BlockBefore bool
 }
 
 // ProtectedRange is a span excluded from compression, reported so the model can
@@ -30,6 +43,10 @@ type ProtectedRange struct {
 	Tokens   int
 	// Tools names the hard-protected tools responsible for the exclusion.
 	Tools []string
+	// StartIndex, EndIndex and Positioned: see RangeInfo.
+	StartIndex int
+	EndIndex   int
+	Positioned bool
 }
 
 // BlockSpan is one active block's coverage, for the nudge's block map.

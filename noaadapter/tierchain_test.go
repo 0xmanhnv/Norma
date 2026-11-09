@@ -145,9 +145,17 @@ func TestMixedTierCompressionLeavesHigherTierActive(t *testing.T) {
 	body := strings.Repeat("filler content. ", 300)
 	tail := strings.Repeat("recent tail. ", 400)
 	msgs := []llm.Message{userText("the task")}
-	for range 9 {
-		msgs = append(msgs, llm.Message{Role: llm.RoleAssistant,
-			Content: []llm.ContentBlock{llm.TextBlock(body)}})
+	// Alternate speakers, as a real conversation does. A run of consecutive
+	// assistant cores is one host message to the provider, and a summary is
+	// never placed inside one — it moves to the run's start, which would put
+	// every block's summary at the same position.
+	for i := range 9 {
+		role := llm.RoleAssistant
+		if i%2 == 1 {
+			role = llm.RoleUser
+		}
+		msgs = append(msgs, llm.Message{Role: role,
+			Content: []llm.ContentBlock{llm.TextBlock(body + strings.Repeat(" ", i))}})
 	}
 	for range 6 {
 		msgs = append(msgs, userText(tail))

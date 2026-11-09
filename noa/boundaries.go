@@ -75,8 +75,13 @@ type ResolvedRange struct {
 	MessageIDs []string
 	// NestedBlockIDs are the active blocks whose anchor falls inside the span.
 	NestedBlockIDs []string
-	// Warnings records endpoints that were snapped to a containing block.
+	// Warnings records endpoints that were snapped to a containing block, and
+	// endpoints that were given reversed.
 	Warnings []string
+	// ReversedNote is set when startRef resolved after endRef and the two were
+	// swapped. It is also in Warnings; it is kept separately so a rejection can
+	// repeat it.
+	ReversedNote string
 }
 
 // resolveContext bundles what boundary resolution needs to look things up.
@@ -202,7 +207,9 @@ func (rc *resolveContext) resolveAnchorIndex(ref boundaryRef) (int, string, *Bou
 // ResolveBoundaries maps a requested range onto the current view.
 //
 // Reversed endpoints are swapped rather than rejected: the model meant a span,
-// and the order it wrote it in carries no information.
+// and the order it wrote it in carries no information. The swap is reported,
+// though — a silent rewrite leaves the model reasoning about input it did not
+// send.
 func ResolveBoundaries(startRef, endRef string, messages []CoreMessage, state CompressionState) (ResolvedRange, *BoundaryNotFoundError) {
 	start, ok := ParseBoundary(startRef)
 	if !ok {
@@ -232,8 +239,12 @@ func ResolveBoundaries(startRef, endRef string, messages []CoreMessage, state Co
 	if w2 != "" {
 		warnings = append(warnings, w2)
 	}
+	reversedNote := ""
 	if si > ei {
 		si, ei = ei, si
+		reversedNote = fmt.Sprintf("note: refs were given reversed (%s→%s), normalized to %s..%s.",
+			start.raw, end.raw, end.raw, start.raw)
+		warnings = append(warnings, reversedNote)
 	}
 
 	kind := BoundaryMessage
@@ -241,7 +252,7 @@ func ResolveBoundaries(startRef, endRef string, messages []CoreMessage, state Co
 		kind = BoundaryBlock
 	}
 
-	out := ResolvedRange{StartIndex: si, EndIndex: ei, Kind: kind, Warnings: warnings}
+	out := ResolvedRange{StartIndex: si, EndIndex: ei, Kind: kind, Warnings: warnings, ReversedNote: reversedNote}
 	for i := si; i <= ei && i < len(messages); i++ {
 		m := messages[i]
 		if m.ID == "" || isRenderedSummaryMessage(m) {

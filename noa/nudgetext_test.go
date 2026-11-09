@@ -49,7 +49,7 @@ func TestRenderGentleNudgeIsSelfContained(t *testing.T) {
 		"HOW TO COMPRESS",
 		"Compressible ranges",
 		"Active blocks",
-		"Compress all ranges in one call",
+		"fold the ranges you keep in ONE call",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("gentle nudge is missing %q", want)

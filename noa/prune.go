@@ -129,7 +129,7 @@ func prune(io NodeIO, _ PipelineContext) NodeIO {
 			}
 		}
 		n, _ := strconv.Atoi(strings.TrimPrefix(b.BlockID, "b"))
-		anchors = append(anchors, anchor{insertAt: insertAt, block: b, blockNum: n})
+		anchors = append(anchors, anchor{insertAt: pairSafeAnchorIndex(io.Messages, insertAt), block: b, blockNum: n})
 	}
 
 	// Stable order: by insertion point, then by block number so two blocks
@@ -172,6 +172,64 @@ func prune(io NodeIO, _ PipelineContext) NodeIO {
 
 	io.Messages = out
 	return io
+}
+
+// pairSafeAnchorIndex moves a summary's insertion point out of any unit the
+// provider validates as a whole.
+//
+// A summary takes the position of the earliest message its block covers, and
+// that position can fall inside such a unit:
+//
+//   - one assistant message: the host merges consecutive assistant cores (a
+//     reasoning run, its text, its tool calls) back into one message. A summary
+//     landing between them splits it, and the tool calls then reach the
+//     provider without the reasoning they were produced with — which thinking
+//     providers reject. An anchor inside an assistant run moves back to the
+//     run's start.
+//   - a parallel tool burst: a range covering one call and its result leaves the
+//     burst's other calls visible, and the summary would then sit between an
+//     assistant tool_calls message and the results answering it. An anchor that
+//     separates a call from its result moves past that result.
+//
+// Both steps walk the input, where covered messages are still present: a
+// covered core between two visible ones is dropped, and the runs then merge.
+//
+// Ported from acp-kernel (MIT, Copyright © 2026 ranxianglei): src/prune.ts,
+// pairSafeAnchorIndex.
+func pairSafeAnchorIndex(msgs []CoreMessage, index int) int {
+	safe := index
+	for safe > 0 && safe < len(msgs) &&
+		msgs[safe-1].Role == RoleAssistant && msgs[safe].Role == RoleAssistant {
+		safe--
+	}
+
+	resultIndex := map[string]int{}
+	for i, m := range msgs {
+		if m.ContentType == CTToolResult && m.ToolCallID != "" {
+			if _, seen := resultIndex[m.ToolCallID]; !seen {
+				resultIndex[m.ToolCallID] = i
+			}
+		}
+	}
+	// Each move lands just past a result, so this reaches a fixed point; the
+	// bound only guards against a malformed list.
+	for range len(msgs) {
+		moved := safe
+		for i := 0; i < safe && i < len(msgs); i++ {
+			m := msgs[i]
+			if m.Role != RoleAssistant || m.ContentType != CTToolCall || m.ToolCallID == "" {
+				continue
+			}
+			if ri, ok := resultIndex[m.ToolCallID]; ok && ri >= safe && ri+1 > moved {
+				moved = ri + 1
+			}
+		}
+		if moved == safe {
+			break
+		}
+		safe = moved
+	}
+	return safe
 }
 
 // stripOrphanedToolCalls drops a tool call whose result is gone.

@@ -2,7 +2,9 @@ package noa
 
 import (
 	"fmt"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -262,9 +264,19 @@ func checkSizeGate(entries []rangeEntry, in ApplyInput, count TokenCountFn,
 				"Use the refs shown in the <noa-ref> tags of the current context. %s",
 			len(in.Ranges), refGateDiagnostics(in.State, len(in.Ranges), unknownCount)), true
 	case consumedCount > 0:
+		var first CompressRange
+		for _, e := range entries {
+			if e.err != nil && e.err.Kind == NotFoundConsumed {
+				first = e.req
+				break
+			}
+		}
 		return fmt.Sprintf(
-			"Every requested range is already compressed — its content is covered by an active block. %s %s",
-			liveHint(in.State), refGateDiagnostics(in.State, len(in.Ranges), unknownCount)), true
+			"Requested range(s) already compressed (e.g. %s..%s) — %s. Nothing new to compress in that window. %s "+
+				"Continue the task, or target one of the CURRENT compressible ranges the context manager lists.%s%s",
+			first.StartRef, first.EndRef, coverDetail(in.State, first),
+			refGateDiagnostics(in.State, len(in.Ranges), unknownCount),
+			tierActionHint(in.Config, in.State), reversalNotes(entries)), true
 	default:
 		n := 0
 		for _, e := range entries {
@@ -274,9 +286,117 @@ func checkSizeGate(entries []rangeEntry, in ApplyInput, count TokenCountFn,
 		}
 		return fmt.Sprintf(
 			"Total compressible content too small (%d chars across %d range(s), min %d). "+
-				"Combine more messages into fewer, larger ranges.",
-			totalChars, n, minChars), true
+				"Combine more messages into fewer, larger ranges.%s",
+			totalChars, n, minChars, reversalNotes(entries)), true
 	}
+}
+
+// reversalNotes repeats, on a rejection, any endpoint swap the resolver made —
+// otherwise the model never learns its input was rewritten and keeps reasoning
+// on the wrong premise.
+func reversalNotes(entries []rangeEntry) string {
+	var notes []string
+	for _, e := range entries {
+		if e.err == nil && !e.skipped && e.resolved.ReversedNote != "" {
+			notes = append(notes, e.resolved.ReversedNote)
+		}
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	return " " + strings.Join(notes, " ")
+}
+
+// coverDetail names the active block(s) that already hold a consumed range.
+//
+// A blanket "these blocks exist" hint sent models into rework loops: they
+// retried with block ids that could not fire, or re-read the block they had
+// just created. Naming the exact owner, and where its original lives, is the
+// actionable version.
+func coverDetail(state CompressionState, spec CompressRange) string {
+	covering := coveringBlockIDs(state, spec)
+	if len(covering) == 0 {
+		return "its refs no longer point to directly compressible content (stale block ref(s) distilled or consumed by higher-tier blocks)"
+	}
+	s := "its content is already summarized in active block(s) " + strings.Join(covering, ", ")
+	if len(covering) == 1 {
+		s += " — read the archive file named in that block's <noa-archive> tag if you need details from it"
+	}
+	return s
+}
+
+// coveringBlockIDs lists the active blocks whose coverage includes either
+// endpoint of spec. A block endpoint is expanded through its coverage, so a
+// stale bN resolves to the higher-tier block that now owns its content.
+func coveringBlockIDs(state CompressionState, spec CompressRange) []string {
+	found := map[string]bool{}
+	for _, ref := range []string{spec.StartRef, spec.EndRef} {
+		b, ok := ParseBoundary(ref)
+		if !ok {
+			continue
+		}
+		var rawIDs []string
+		if b.kind == BoundaryMessage {
+			raw, ok := state.MessageRefs.ByRef[b.raw]
+			if !ok {
+				raw, ok = state.MessageRefs.ByRef[IndexToRef(b.num)]
+			}
+			if ok {
+				rawIDs = []string{raw}
+			}
+		} else if blk := FindBlock(&state, b.raw); blk != nil {
+			rawIDs = blk.EffectiveMessageIDs
+		}
+		if len(rawIDs) == 0 {
+			continue
+		}
+		for _, cand := range ActiveBlocks(state) {
+			for _, id := range rawIDs {
+				if slices.Contains(cand.EffectiveMessageIDs, id) {
+					found[cand.BlockID] = true
+					break
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(found))
+	for id := range found {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return blockNum(out[i]) < blockNum(out[j]) })
+	return out
+}
+
+// tierActionHint offers block-id boundaries only when tier consolidation can
+// actually fire. Suggesting bN..bM ranges otherwise sends the model after a
+// compression that is rejected or reclaims nothing.
+func tierActionHint(cfg Config, state CompressionState) string {
+	if !cfg.Tiers.Enabled {
+		return ""
+	}
+	var t1, t2 []CompressionBlock
+	for _, b := range ActiveBlocks(state) {
+		switch b.Tier {
+		case 1:
+			t1 = append(t1, b)
+		case 2:
+			t2 = append(t2, b)
+		}
+	}
+	if cfg.Tiers.MaxTier >= 3 && len(t2) > 0 && len(t2) >= cfg.Tiers.Tier3Trigger {
+		return fmt.Sprintf(` Tier condensation is actionable now: Compress({ content: [{ startId: %q, endId: %q, summary: "...", topic: "..." }] }) merges those tier-2 blocks into one tier-3 block.`,
+			t2[0].BlockID, t2[len(t2)-1].BlockID)
+	}
+	if len(t1) > 0 && len(t1) >= cfg.Tiers.Tier2Trigger {
+		return fmt.Sprintf(` Tier distillation is actionable now: Compress({ content: [{ startId: %q, endId: %q, summary: "...", topic: "..." }] }) merges those tier-1 blocks into one tier-2 block.`,
+			t1[0].BlockID, t1[len(t1)-1].BlockID)
+	}
+	return ""
+}
+
+func blockNum(id string) int {
+	n, _ := strconv.Atoi(strings.TrimPrefix(id, "b"))
+	return n
 }
 
 // refGateDiagnostics gives the model concrete numbers instead of leaving it to
@@ -285,15 +405,6 @@ func refGateDiagnostics(state CompressionState, requested, unknown int) string {
 	highest := HighestUsedIndex(state.MessageRefs)
 	return fmt.Sprintf("[diagnostics: session highest ref=%s, unknown ranges in request=%d/%d, session history=%d compression(s), %d block(s)]",
 		IndexToRef(max(highest, 1)), unknown, requested, state.Stats.CompressionCount, len(state.Blocks))
-}
-
-// liveHint names the blocks that currently exist, so the model can retarget.
-func liveHint(state CompressionState) string {
-	active := ActiveBlocks(state)
-	if len(active) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("Active blocks: %s..%s.", active[0].BlockID, active[len(active)-1].BlockID)
 }
 
 func findMessage(msgs []CoreMessage, id string) *CoreMessage {
@@ -396,27 +507,34 @@ func buildBlock(req CompressRange, r ResolvedRange, state *CompressionState, in 
 				cfg.PreserveRecentMessages, strings.Join(hitProtected, ", "))
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"Excluded %d protected message(s) %s from compression range (recent/last-user zone).",
+			"Excluded %d protected message(s) %s from compression range (recent/last-user zone) — they stay visible "+
+				"outside the new block; do not target them in another Compress call.",
 			len(hitProtected), strings.Join(hitProtected, ", ")))
 	}
 
-	// (6) Turn integrity: never leave a visible tool call whose reasoning run
-	// was compressed away.
-	kept, withdrawn := WithdrawSplitTurns(msgs, direct)
-	if len(withdrawn) > 0 {
-		direct = kept
-		for _, id := range withdrawn {
+	// (6) Fold integrity. The two carves above remove individual messages after
+	// the pair adjustment completed the range, so they can split a turn (a
+	// visible tool call whose reasoning run folds) or a tool call from its
+	// result. Either shape is rejected by strict providers, so the affected
+	// messages stay visible. Both invariants are checked to a fixed point; the
+	// recommendation runs the same gate, so it never advertises a range this
+	// step would empty.
+	if iw := ComputeIntegrityWithdrawals(msgs, effective); len(iw.Withdrawn) > 0 {
+		before := len(direct)
+		for id := range iw.Withdrawn {
 			delete(effective, id)
+			delete(direct, id)
 		}
+		desc := splitDescription(iw)
 		if len(direct) == 0 && len(consumedBlocks) == 0 {
 			return CompressionBlock{}, nil, warnings, surviving, fmt.Errorf(
-				"Range would split a turn at the protected-zone boundary: a visible tool-call must keep its reasoning run " +
-					"(strict-echo providers reject a rebuilt request that lost it). Shrink the range to end before the turn starts, " +
-					"or wait until the whole turn ages out of the protected zone.")
+				"Range would split %s at the protected-zone boundary: a visible tool-call must keep its reasoning run "+
+					"and its results (strict providers reject a rebuilt request that lost either). Shrink the range to end "+
+					"before the turn starts, or wait until the whole turn ages out of the protected zone.", desc)
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"Withdrew %d message(s) to keep turn(s) intact (a visible tool-call would have lost its reasoning run).",
-			len(withdrawn)))
+			"Withdrew %d message(s) from the range to keep %s intact (a visible tool-call would have lost its reasoning run or its results).",
+			before-len(direct), desc))
 	}
 
 	// (7) Everything in the range is already covered.
@@ -489,6 +607,19 @@ func buildBlock(req CompressRange, r ResolvedRange, state *CompressionState, in 
 		OriginalTokens: compressed,
 	})
 	return blk, content, warnings, surviving, nil
+}
+
+// splitDescription names what an integrity withdrawal protected, for the
+// model-facing warning or error.
+func splitDescription(iw IntegrityWithdrawals) string {
+	var parts []string
+	if iw.SplitTurnCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d turn(s)", iw.SplitTurnCount))
+	}
+	if iw.SplitPairCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d tool call/result pair(s)", iw.SplitPairCount))
+	}
+	return strings.Join(parts, " and ")
 }
 
 // validateSummary enforces the summary bounds. The messages are model-facing
