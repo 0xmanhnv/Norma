@@ -121,11 +121,20 @@ Implements the core loop, dual providers, tools, the full permission pipeline, c
 
 Norma is a maintained fork of **[Autumn-27/norma](https://github.com/Autumn-27/norma)** by Autumn-27, the original author and copyright holder, released under the Apache License 2.0. This fork builds on that work; the upstream copyright notice is preserved in [`LICENSE`](LICENSE). Development of the fork happens on the `patches` branch.
 
+Norma's archive-backed context-compression package (`noa` / `noaadapter`) uses code
+from **acp-kernel** by ranxianglei (<https://github.com/ranxianglei/acp-kernel>),
+including code that acp-kernel took from **billion-context**
+(<https://github.com/ranxianglei/billion-context>). Both are MIT-licensed; acp-kernel
+releases from v0.0.98 on add an attribution term, which this notice and
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) satisfy for Norma. If you build a
+user-facing product on Norma that ships this package, see the downstream obligation in
+that file.
+
 ## License
 
 Apache License 2.0 — see [`LICENSE`](LICENSE). Copyright 2026 Autumn-27.
 
 Norma also bundles source derived from third-party work under its own license: the
-`noa` / `noaadapter` compression engine is ported from acp-kernel (MIT). The required
-notice and full MIT license text are listed in
-[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+`noa` / `noaadapter` compression engine is ported from acp-kernel (MIT, plus an
+attribution term for code taken from v0.0.98 on). The required notices and full license
+texts are listed in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
