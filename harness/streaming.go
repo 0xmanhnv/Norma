@@ -204,7 +204,7 @@ func (e *streamExec) drainSynthetic(msg string) bool {
 			continue
 		}
 		t.status = stYielded
-		t.result = llm.ToolResultText(t.block.ID, msg, true)
+		t.result = toolFailure(t.block, msg, tool.CodeInterrupted)
 		r := t.result
 		evs = append(evs, Event{Kind: KindToolResult, ToolResult: &r})
 	}
@@ -227,7 +227,7 @@ func (e *streamExec) results() []llm.ContentBlock {
 		if t.status == stCompleted || t.status == stYielded {
 			out[i] = t.result
 		} else {
-			out[i] = llm.ToolResultText(t.block.ID, "tool execution interrupted", true)
+			out[i] = toolFailure(t.block, "tool execution interrupted", tool.CodeInterrupted)
 		}
 	}
 	return out

@@ -337,7 +337,7 @@ func parseAnthropicResponse(raw []byte) (Message, string, Usage, error) {
 		if r.Error != nil {
 			msg = r.Error.Message
 		}
-		return Message{}, "", Usage{}, fmt.Errorf("anthropic: %s", msg)
+		return Message{}, "", Usage{}, providerError("anthropic", msg)
 	}
 	var usage Usage
 	if r.Usage != nil {
@@ -440,7 +440,7 @@ func parseAnthropicFrame(data string) (StreamEvent, bool, error) {
 		if f.Error != nil {
 			msg = f.Error.Message
 		}
-		return StreamEvent{}, false, fmt.Errorf("anthropic: %s", msg)
+		return StreamEvent{}, false, providerError("anthropic", msg)
 	}
 	return StreamEvent{}, false, nil
 }
@@ -483,7 +483,8 @@ func (u anthropicUsage) norm() Usage {
 // with "Extra inputs are not permitted". That history is reachable: transcripts
 // persist llm.Message verbatim, so a session recorded against Gemini and then
 // resumed (or summarized, or handed to a subagent) with an Anthropic provider
-// would fail on every turn.
+// would fail on every turn. ContentBlock.ToolError is cleared for the same
+// reason: it is local metadata on a tool_result block.
 func filterThinkingBlocks(msgs []Message, thinkingEnabled bool) []Message {
 	out := make([]Message, 0, len(msgs))
 	for _, m := range msgs {
@@ -500,7 +501,7 @@ func filterThinkingBlocks(msgs []Message, thinkingEnabled bool) []Message {
 		if len(content) == 0 {
 			continue // empty content array is rejected by Anthropic — drop it
 		}
-		content = stripThoughtSignatures(content)
+		content = stripLocalFields(content)
 		if len(content) == len(m.Content) && sameBacking(content, m.Content) {
 			out = append(out, m)
 		} else {
@@ -510,14 +511,16 @@ func filterThinkingBlocks(msgs []Message, thinkingEnabled bool) []Message {
 	return out
 }
 
-// stripThoughtSignatures clears ThoughtSignature on every block, copying only
-// when at least one is set so untouched history keeps sharing its backing array.
-// Callers own the returned slice; the input is never mutated — it belongs to the
-// caller's conversation state and must survive the request unchanged.
-func stripThoughtSignatures(content []ContentBlock) []ContentBlock {
+// stripLocalFields clears the block fields that must never reach the Anthropic
+// wire: ThoughtSignature (another provider's state, see above) and ToolError
+// (local metadata about a failed call). It copies only when at least one is
+// set, so untouched history keeps sharing its backing array. Callers own the
+// returned slice; the input is never mutated — it belongs to the caller's
+// conversation state and must survive the request unchanged.
+func stripLocalFields(content []ContentBlock) []ContentBlock {
 	idx := -1
 	for i, b := range content {
-		if b.ThoughtSignature != "" {
+		if b.ThoughtSignature != "" || b.ToolError != nil {
 			idx = i
 			break
 		}
@@ -529,6 +532,7 @@ func stripThoughtSignatures(content []ContentBlock) []ContentBlock {
 	copy(out, content)
 	for i := idx; i < len(out); i++ {
 		out[i].ThoughtSignature = ""
+		out[i].ToolError = nil
 	}
 	return out
 }

@@ -64,6 +64,7 @@ Mutating tools (Write/Edit/Bash) prompt for approval unless `-yes` is set. Suppl
 - **Dual wire formats, one model.** Both adapters translate to/from a single Anthropic-style content-block model, so the loop and tools never change when you switch providers. Reasoning models' `reasoning_content` surfaces as thinking events.
 - **Host owns the prompt.** The SDK ships no preset system prompt — `Options.SystemPrompt` is yours. Coding / security-audit prompts live in `examples/`, not the core.
 - **Fail-closed tools.** New tools default to not-read-only, not-concurrency-safe, approval-required. Read-only tools opt in and become eligible for parallel execution.
+- **Stable error codes.** Failures carry an `llm.Code` next to their message (`llm.Error`, `llm.CodeOf`, `llm.IsCode`). The provider adapters classify context-window, rate-limit, auth and availability failures at their boundary; a failed tool call's code rides on its `tool_result` block (`ContentBlock.ToolError`) into events and the transcript, never to the model.
 - **`iter.Seq2` streaming.** `Prompt` and `Query` are range-over-func iterators; cancellation is via `context.Context`.
 
 ## Examples

@@ -1,7 +1,6 @@
 package noaadapter
 
 import (
-	"errors"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -36,8 +35,9 @@ type Options struct {
 	Now func() time.Time
 }
 
-// ErrNoArchiveDir is returned when ArchiveBaseDir is empty.
-var ErrNoArchiveDir = errors.New("noaadapter: ArchiveBaseDir is required — compression must not run without a durable place for the originals")
+// ErrNoArchiveDir is returned when ArchiveBaseDir is empty. It carries
+// llm.CodeInvalidConfig; compare with errors.Is.
+var ErrNoArchiveDir error = llm.NewError(llm.CodeInvalidConfig, "noaadapter: ArchiveBaseDir is required — compression must not run without a durable place for the originals")
 
 // Session is the state the compactor and the Compress tool share.
 //

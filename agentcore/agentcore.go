@@ -8,7 +8,6 @@ package agentcore
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"iter"
 	"strings"
 	"time"
@@ -383,7 +382,7 @@ func (s *Session) UnlockSet() *tool.UnlockSet { return s.unlock }
 // Options.Transcript to be set. Subsequent messages append to the same file.
 func (s *Session) Resume(sessionID string) error {
 	if s.store == nil {
-		return errors.New("agentcore: Resume requires Options.Transcript")
+		return llm.NewError(llm.CodeInvalidConfig, "agentcore: Resume requires Options.Transcript")
 	}
 	recs, err := s.store.Load(s.store.MainPath(sessionID))
 	if err != nil {

@@ -50,11 +50,16 @@ func doStream(ctx context.Context, cfg Config, url string, body []byte, setHeade
 		}
 		if attempt >= retries || !retryable {
 			if err != nil {
-				return nil, err
+				if ctx.Err() != nil {
+					return nil, err // cancellation is the caller's, not the provider's
+				}
+				return nil, WrapError(CodeUnavailable, "", err)
 			}
 			data, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			return nil, fmt.Errorf("%s: status %d: %s", errPrefix, resp.StatusCode, strings.TrimSpace(string(data)))
+			body := strings.TrimSpace(string(data))
+			return nil, NewError(classifyStatus(resp.StatusCode, body),
+				fmt.Sprintf("%s: status %d: %s", errPrefix, resp.StatusCode, body))
 		}
 		if resp != nil {
 			resp.Body.Close()

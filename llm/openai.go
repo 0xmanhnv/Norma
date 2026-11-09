@@ -475,7 +475,7 @@ func parseOpenAIResponse(raw []byte) (Message, string, Usage, error) {
 		return Message{}, "", Usage{}, fmt.Errorf("openai: decode response: %w (body: %s)", err, truncate(string(raw), 500))
 	}
 	if r.Error != nil {
-		return Message{}, "", Usage{}, fmt.Errorf("openai: %s", r.Error.Message)
+		return Message{}, "", Usage{}, providerError("openai", r.Error.Message)
 	}
 	var usage Usage
 	if r.Usage != nil {

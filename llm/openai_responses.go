@@ -239,7 +239,7 @@ func parseResponsesFrame(event, data string) (StreamEvent, bool, error) {
 		if f.Error != nil {
 			msg = f.Error.Message
 		}
-		return StreamEvent{}, false, fmt.Errorf("openai-responses: %s", msg)
+		return StreamEvent{}, false, providerError("openai-responses", msg)
 	}
 	return StreamEvent{}, false, nil
 }
@@ -318,7 +318,7 @@ func parseResponsesResponse(raw []byte) (Message, string, Usage, error) {
 		return Message{}, "", Usage{}, fmt.Errorf("openai-responses: decode response: %w (body: %s)", err, truncate(string(raw), 500))
 	}
 	if r.Error != nil {
-		return Message{}, "", Usage{}, fmt.Errorf("openai-responses: %s", r.Error.Message)
+		return Message{}, "", Usage{}, providerError("openai-responses", r.Error.Message)
 	}
 	var usage Usage
 	if r.Usage != nil {
