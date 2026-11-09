@@ -16,6 +16,15 @@ bin/
 dist/
 *.out
 
+# Compiled example / CLI binaries (produced by a stray `go build ./path`)
+/minimal
+/agentcore
+/coordinator
+/custom-llm
+/coding-agent
+/security-audit
+/planner-memory
+
 # OS files
 .DS_Store
 Thumbs.db
