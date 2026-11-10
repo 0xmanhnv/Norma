@@ -37,6 +37,13 @@ func NewBash() CoreTool {
 		"timeout_ms": map[string]any{"type": "integer", "description": "Timeout in ms (default 120000, max 600000)."},
 	}
 	desc := "Executes a shell command in the working directory and returns combined stdout and stderr. Use for running tests, builds, package managers, and git. Prefer the dedicated file tools for file work."
+	// Only advertise the cap where it is actually enforced: the guard needs
+	// /proc (linux) and the task manager (runBashSync has no watchdog), and the
+	// cap can be switched off outright. Promising a bound that never fires is
+	// worse than saying nothing.
+	if limit := memCapBytes(); memGuardSupported && limit > 0 && !BackgroundTasksDisabled() {
+		desc += fmt.Sprintf(" A per-command memory cap (%s) kills a command whose process group exceeds it; the error names the cap.", humanBytes(limit))
+	}
 	prompt := "The command runs through the shell, so you are not limited to one command: chain steps with && or ;, use pipes, and pass multi-line scripts or heredocs. For anything beyond a simple one-liner — loops, parsing, string/JSON handling, HTTP logic, computation — prefer writing a short script (Python, Node, shell, etc.) and executing it (e.g. via a heredoc or by writing a file then running it) rather than forcing everything into a single command. A timeout (default 120s, max 600s) applies. Avoid commands needing interactive input."
 	if !BackgroundTasksDisabled() {
 		props["run_in_background"] = map[string]any{
@@ -78,7 +85,19 @@ type CommandOutput struct {
 	Timeout  string `json:"timeout,omitempty"`
 	// RunError says why the command could not run to an exit status.
 	RunError string `json:"run_error,omitempty"`
+	// KilledBy names the watchdog that killed the command: "memory_cap" (its
+	// process group grew past the per-command memory cap) or "output_cap" (its
+	// output grew past the per-task output cap). Cap is that limit, rendered.
+	// A watchdog kill has no meaningful exit code, so these replace it.
+	KilledBy string `json:"killed_by,omitempty"`
+	Cap      string `json:"cap,omitempty"`
 }
+
+// Values of CommandOutput.KilledBy.
+const (
+	killedByMemoryCap = "memory_cap"
+	killedByOutputCap = "output_cap"
+)
 
 var bashOutput = DeclareOutput(OutputSpec[CommandOutput]{
 	Schema: map[string]any{
@@ -90,6 +109,8 @@ var bashOutput = DeclareOutput(OutputSpec[CommandOutput]{
 			"timed_out": map[string]any{"type": "boolean"},
 			"timeout":   map[string]any{"type": "string"},
 			"run_error": map[string]any{"type": "string"},
+			"killed_by": map[string]any{"type": "string", "enum": []any{killedByMemoryCap, killedByOutputCap}},
+			"cap":       map[string]any{"type": "string"},
 		},
 		"required": []any{"output", "exit_code"},
 	},
@@ -98,14 +119,15 @@ var bashOutput = DeclareOutput(OutputSpec[CommandOutput]{
 		switch {
 		case v.RunError != "":
 			s = fmt.Sprintf("%s\n\n[failed to run: %s]", v.Output, v.RunError)
+		case v.KilledBy == killedByMemoryCap:
+			s = withNoOutput(v.Output) + fmt.Sprintf(
+				"\n\n[terminated: the command's process group exceeded the %s per-command memory cap and was killed — stream or page the data instead of accumulating it in memory]", v.Cap)
+		case v.KilledBy == killedByOutputCap:
+			s = withNoOutput(v.Output) + fmt.Sprintf("\n\n[terminated: output exceeded the %s per-task output cap]", v.Cap)
 		case v.TimedOut:
 			s = v.Output + fmt.Sprintf("\n\n[command timed out after %s]", v.Timeout)
 		case v.Failed:
-			out := v.Output
-			if out == "" {
-				out = "(no output)"
-			}
-			s = fmt.Sprintf("%s\n\n[exit code %d]", out, v.ExitCode)
+			s = fmt.Sprintf("%s\n\n[exit code %d]", withNoOutput(v.Output), v.ExitCode)
 		case strings.TrimSpace(v.Output) == "":
 			s = "(command produced no output)"
 		default:
@@ -114,6 +136,15 @@ var bashOutput = DeclareOutput(OutputSpec[CommandOutput]{
 		return []llm.ContentBlock{llm.TextBlock(s)}, nil
 	},
 })
+
+// withNoOutput stands in "(no output)" for an empty output ahead of a status
+// line.
+func withNoOutput(out string) string {
+	if out == "" {
+		return "(no output)"
+	}
+	return out
+}
 
 // commandResult wraps v as the tool's result; anything but a clean exit is an
 // error result.
@@ -195,6 +226,14 @@ func runBashManaged(ctx context.Context, tc *ToolContext, command string, timeou
 		v := CommandOutput{Output: Capture(tc, output)}
 		if info.Status == TaskFailed {
 			v.Failed, v.ExitCode = true, info.ExitCode
+		}
+		// A watchdog kill carries no exit code of its own; the bare code would
+		// read as a cryptic failure, so name the cap that fired instead.
+		switch info.Reason {
+		case terminateMemory:
+			v.KilledBy, v.Cap = killedByMemoryCap, humanBytes(memCapBytes())
+		case terminateOversize:
+			v.KilledBy, v.Cap = killedByOutputCap, humanBytes(maxTaskOutputBytes)
 		}
 		return commandResult(v), nil
 	}

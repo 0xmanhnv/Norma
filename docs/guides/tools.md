@@ -74,6 +74,12 @@ Everything else is opt-in:
 | AskUserQuestion | `Options.AskUser` | Pause a long task to ask a structured multiple-choice question. |
 | TaskOutput / TaskStop / TaskList / Monitor | background tasks enabled | See the [jobs guide](jobs.md). |
 
+With background tasks enabled, **Bash** runs every command through the task manager,
+so the per-task output cap (50 MiB) and, on Linux, the per-task memory cap
+(`AGENT_CORE_TASK_MEM_CAP`) apply to foreground commands too. A command killed by
+either reports `killed_by` and `cap` in its result instead of an exit code; see
+[jobs → Safety](jobs.md#safety).
+
 ## Input handling
 
 Before a tool runs, `harness/tools.go: execOne` **coerces then validates** the model's

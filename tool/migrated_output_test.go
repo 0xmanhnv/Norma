@@ -176,6 +176,8 @@ func TestCommandOutputRender(t *testing.T) {
 		{CommandOutput{Output: "partial", TimedOut: true, Timeout: "2m0s"}, "partial\n\n[command timed out after 2m0s]"},
 		{CommandOutput{Output: "", RunError: "exec: not found"}, "\n\n[failed to run: exec: not found]"},
 		{CommandOutput{Output: "  \n", Failed: true, ExitCode: 2}, "  \n\n\n[exit code 2]"},
+		{CommandOutput{Failed: true, KilledBy: killedByMemoryCap, Cap: "2GiB"}, "(no output)\n\n[terminated: the command's process group exceeded the 2GiB per-command memory cap and was killed — stream or page the data instead of accumulating it in memory]"},
+		{CommandOutput{Output: "tail", Failed: true, KilledBy: killedByOutputCap, Cap: "50MiB"}, "tail\n\n[terminated: output exceeded the 50MiB per-task output cap]"},
 	} {
 		p, err := bashOutput.Project(nil, c.v)
 		if err != nil || p.Content[0].Text != c.want {
