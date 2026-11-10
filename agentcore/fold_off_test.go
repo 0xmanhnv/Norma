@@ -37,7 +37,7 @@ func TestNoCompactorMeansBuiltinCompactionUnchanged(t *testing.T) {
 	if s.compactor == nil {
 		t.Fatal("no compactor was installed")
 	}
-	if _, isNoa := s.compactor.(harness.ContextView); isNoa {
+	if _, isFold := s.compactor.(harness.ContextView); isFold {
 		t.Fatal("the session installed a ContextView without being asked for one")
 	}
 	if len(warns) != 0 {

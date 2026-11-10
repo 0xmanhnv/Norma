@@ -90,7 +90,7 @@ func TestSalvageableArgumentsSurviveTheSchemaGate(t *testing.T) {
 // The other half: shapes the parser correctly REJECTS must still reach it, so
 // the model gets formatParseError's "expected shape" — which names Compress's
 // contract — rather than a schema message that does not.
-func TestUnparseableArgumentsReachNoasDiagnostics(t *testing.T) {
+func TestUnparseableArgumentsReachFoldDiagnostics(t *testing.T) {
 	corpus := map[string]string{
 		"no content field":  `{"topic":"t"}`,
 		"content is object": `{"content":{"startId":"m00001"}}`,
