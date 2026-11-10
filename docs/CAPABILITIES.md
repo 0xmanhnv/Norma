@@ -28,7 +28,7 @@ active without any configuration; "opt-in" means you set the listed `Options` fi
 | Capability | Package | How | Guide |
 |---|---|---|---|
 | Built-in compaction (MicroCompact / AutoCompact / Reactive + circuit breaker) | `compaction` | `Options.Compaction` | [compaction](guides/compaction.md#built-in-compaction) |
-| Model-driven compression | `noa`, `noaadapter` | `noaadapter.Enable(&opts, ...)` | [compaction](guides/compaction.md#model-driven-compression-noa) |
+| Model-driven compression | `fold`, `foldadapter` | `foldadapter.Enable(&opts, ...)` | [compaction](guides/compaction.md#model-driven-compression-fold) |
 | Custom context manager | `harness` | `Options.Compactor` (optionally `ContextView`) | [compaction](guides/compaction.md#the-harness-contract) |
 
 > A session holds exactly one context manager; setting `Compactor` ignores `Compaction`.

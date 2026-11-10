@@ -46,7 +46,7 @@ One page per major subsystem. Deep but accurate; each cites the code.
 | [Agent loop](guides/agent-loop.md) | `harness` | The turn lifecycle, recovery paths, continuation gates, termination reasons. |
 | [Tools](guides/tools.md) | `tool` | The `CoreTool` contract, fail-closed defaults, the built-in set, typed output, deferred tools. |
 | [Permissions](guides/permissions.md) | `permission` | Decisions, the six modes, deny-priority, the four-stage pipeline. |
-| [Compaction](guides/compaction.md) | `compaction`, `noa` | Non-destructive context management; built-in vs model-driven. |
+| [Compaction](guides/compaction.md) | `compaction`, `fold` | Non-destructive context management; built-in vs model-driven. |
 | [Subagents](guides/subagents.md) | `subagent`, `coordinator` | Context-isolated delegation and multi-agent coordination. |
 | [MCP](guides/mcp.md) | `mcp` | External and in-process Model Context Protocol tools. |
 | [Skills](guides/skills.md) | `skill` | Named instruction packages that survive compaction. |

@@ -38,7 +38,7 @@ flowchart LR
 | `tool` | `CoreTool` contract, fail-closed `Build` factory, `Registry`, a lightweight JSON-Schema validator, and the core tools: **Read, Write, Edit, MultiEdit, LS, Glob, Grep, Bash, Sleep** (default set) plus opt-in **WebFetch** / **WebSearch** (network, permission-gated), **TodoWrite** (stateful planning), **AskUserQuestion** (structured mid-task questions), background-task tools (**TaskOutput/TaskStop/TaskList/Monitor**), and **deferred tools** — schemas withheld from the model to save context, discovered on demand via `SearchExtraTools` and invoked through `ExecuteExtraTool`. |
 | `permission` | The safety boundary: `allow`/`deny`/`ask` decisions, six `PermissionMode`s, allow/deny rules with deny-priority, and the four-stage `Evaluate` pipeline. |
 | `harness` | The loop: `Query` streams `Event`s (`iter.Seq2`), schedules tools (parallel for read-only, serial for mutating), pairs every `tool_use` with a `tool_result` (synthetic on deny/abort), enforces termination reasons, and threads cancellation. `QueryDeps` injects side effects for testing. |
-| `compaction` | Non-destructive context-window management: **MicroCompact** (clear stale tool results), **AutoCompact** (summarize behind a `compact_boundary`), and **Reactive** recovery from prompt-too-long, plus a circuit breaker. Invoked skills are re-injected verbatim after each boundary so their instructions survive summarization. An opt-in **model-driven** engine (`noa`/`noaadapter`), where the model writes the summaries, is available as a mutually-exclusive alternative. |
+| `compaction` | Non-destructive context-window management: **MicroCompact** (clear stale tool results), **AutoCompact** (summarize behind a `compact_boundary`), and **Reactive** recovery from prompt-too-long, plus a circuit breaker. Invoked skills are re-injected verbatim after each boundary so their instructions survive summarization. An opt-in **model-driven** engine (`fold`/`foldadapter`), where the model writes the summaries, is available as a mutually-exclusive alternative. |
 | `hook` | Eight lifecycle hooks (PreToolUse, PostToolUse, Stop, …) as Go callbacks that can block, rewrite input, inject context, or gate the Stop transition. |
 | `subagent` | An `Agent` tool that delegates to isolated child agents reusing the same loop, with a recursion-depth guard. |
 | `mcp` | Model Context Protocol integration: a stdio JSON-RPC client and in-process servers, exposing tools as `mcp__<server>__<tool>`. |
@@ -121,7 +121,7 @@ Implements the core loop, dual providers, tools, the full permission pipeline, c
 
 Norma is a maintained fork of **[Autumn-27/norma](https://github.com/Autumn-27/norma)** by Autumn-27, the original author and copyright holder, released under the Apache License 2.0. This fork builds on that work; the upstream copyright notice is preserved in [`LICENSE`](LICENSE). Development of the fork happens on the `patches` branch.
 
-Norma's archive-backed context-compression package (`noa` / `noaadapter`) uses code
+Norma's archive-backed context-compression package (`fold` / `foldadapter`) uses code
 from **acp-kernel** by ranxianglei (<https://github.com/ranxianglei/acp-kernel>),
 including code that acp-kernel took from **billion-context**
 (<https://github.com/ranxianglei/billion-context>). Both are MIT-licensed; acp-kernel
@@ -135,6 +135,6 @@ that file.
 Apache License 2.0 — see [`LICENSE`](LICENSE). Copyright 2026 Autumn-27.
 
 Norma also bundles source derived from third-party work under its own license: the
-`noa` / `noaadapter` compression engine is ported from acp-kernel (MIT, plus an
+`fold` / `foldadapter` compression engine is ported from acp-kernel (MIT, plus an
 attribution term for code taken from v0.0.98 on). The required notices and full license
 texts are listed in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
