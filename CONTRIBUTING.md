@@ -8,8 +8,10 @@ model of the system before you change it, read [docs/ARCHITECTURE.md](docs/ARCHI
 
 Corvid is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma).
 
-- The **`patches`** branch is where fork development happens and holds the current API.
-  Base your branches on `patches` and open pull requests against it.
+- **`main`** is where fork development happens and holds the current API.
+  Base your branches on `main` and open pull requests against it.
+- **`mirror`** tracks upstream's `main` unchanged; upstream fixes are ported from it
+  selectively. Do not open pull requests against it.
 - Releases are tagged `v0.4.4-p.N`.
 - Keep the upstream copyright and `LICENSE` intact. Corvid is Apache-2.0; contributions
   are accepted under the same license.

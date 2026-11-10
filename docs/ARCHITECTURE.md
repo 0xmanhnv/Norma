@@ -1,6 +1,6 @@
 # Corvid Architecture
 
-> How the pieces fit together, verified against the source on the `patches` branch.
+> How the pieces fit together, verified against the source on the `main` branch.
 > Every diagram below reflects real control flow; package and file paths are cited so
 > you can read the code next to the prose. When a doc and the code disagree, the code wins —
 > please open an issue.
