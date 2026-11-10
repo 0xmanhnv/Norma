@@ -35,6 +35,7 @@ architecture overview or a per-subsystem guide.
   permission pipeline, compaction, subagents, the event model, and transcript/resume,
   with verified Mermaid diagrams.
 - [CAPABILITIES.md](CAPABILITIES.md) — the capability matrix: what Corvid can do, which
+- [brand/](brand/README.md) — the logo, wordmark, colours and how to use them.
   package owns it, and how to turn it on.
 
 ## Subsystem guides
