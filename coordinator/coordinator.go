@@ -41,6 +41,23 @@ type Config struct {
 	MaxParallel    int // bounded concurrency for RunParallel (default 4)
 	CanUseTool     permission.CanUseTool
 	Hooks          harness.HookRunner
+
+	// OnResult, when set, is called once per task from RunParallel as that
+	// worker settles — in addition to the result being stored — so a host can
+	// surface progress while the fleet is still running. Calls can arrive from
+	// several worker goroutines at once, so it must be safe to call
+	// concurrently; RunParallel serializes the calls but does not order them by
+	// task index.
+	OnResult func(index int, r Result)
+
+	// StopOnFatal, when true, makes a worker that fails with a credential- or
+	// configuration-level provider error trip a circuit breaker: RunParallel
+	// stops launching the workers that have not started yet instead of driving
+	// the whole fleet into the same failure, and those tasks settle with the
+	// cancellation error. Transient failures (rate-limit, unavailable) and
+	// task-specific errors never trip it. Default false preserves the
+	// launch-everything behavior.
+	StopOnFatal bool
 }
 
 func (c *Config) workerPrompt() []string {
@@ -105,7 +122,10 @@ type Result struct {
 }
 
 // RunParallel fans tasks out to workers concurrently (bounded by MaxParallel)
-// and returns results in task order.
+// and returns results in task order. When OnResult is set it reports each
+// result as that worker settles; when StopOnFatal is set a credential- or
+// configuration-level failure short-circuits the remaining launches (see the
+// Config fields).
 func (c *Config) RunParallel(ctx context.Context, tasks []string) []Result {
 	cfg := c.subagentConfig()
 	results := make([]Result, len(tasks))
@@ -113,18 +133,56 @@ func (c *Config) RunParallel(ctx context.Context, tasks []string) []Result {
 	if limit <= 0 {
 		limit = 4
 	}
+	// A private child context lets the breaker cancel the fleet without
+	// disturbing the caller's context. The defer catches the normal return.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// report stores a result and, under a mutex, forwards it to OnResult. Each
+	// task owns a distinct slice index, so only the callback needs guarding.
+	var cbMu sync.Mutex
+	report := func(i int, r Result) {
+		results[i] = r
+		if c.OnResult != nil {
+			cbMu.Lock()
+			c.OnResult(i, r)
+			cbMu.Unlock()
+		}
+	}
+
 	sem := make(chan struct{}, limit)
 	var wg sync.WaitGroup
 	for i, task := range tasks {
+		if ctx.Err() != nil {
+			// The breaker has tripped; settle the rest without launching them.
+			report(i, Result{Task: task, Err: ctx.Err()})
+			continue
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, task string) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			out, err := subagent.Run(ctx, cfg, "worker", task, c.WorkingDir)
-			results[i] = Result{Task: task, Output: out, Err: err}
+			report(i, Result{Task: task, Output: out, Err: err})
+			if c.StopOnFatal && fatalFleetError(err) {
+				cancel()
+			}
 		}(i, task)
 	}
 	wg.Wait()
 	return results
+}
+
+// fatalFleetError reports whether err is a provider failure that will defeat
+// every worker equally — rejected credentials or an unusable configuration —
+// so there is no point launching the rest of the fleet into it. Transient
+// codes (rate_limited, unavailable) and task-specific failures are not fatal.
+func fatalFleetError(err error) bool {
+	switch llm.CodeOf(err) {
+	case llm.CodeAuth, llm.CodeInvalidConfig:
+		return true
+	default:
+		return false
+	}
 }
