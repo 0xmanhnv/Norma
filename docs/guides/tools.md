@@ -88,6 +88,14 @@ disabled. Everything else is opt-in:
 | TaskOutput / TaskStop / TaskList / Monitor | on by default; `Options.DisableBackgroundTasks` removes them | See the [jobs guide](jobs.md). |
 | shell_open / shell_send / shell_read / shell_list / shell_close | add `tool.ShellSessionTools()` to `Options.Tools` | Interactive PTY sessions for programs that expect a terminal, such as a REPL. They need background tasks on; `AGENT_CORE_DISABLE_INTERACTIVE_SHELL` turns them off. |
 
+Each built-in tool's name is exported as a constant: `tool.BashName`,
+`tool.MonitorName`, `tool.ShellSendName`, `tool.WebSearchName`, `tool.SleepName` and
+so on in `tool/names.go`, plus `skill.ToolName`, `subagent.ToolName`, the memory and
+plan-mode names in their packages, and `tool.SearchExtraToolsName` /
+`tool.ExecuteExtraToolName`. Match on these in hooks, permission rules and allow
+lists instead of string literals, so a reference that drifts fails to compile.
+The names themselves are stable.
+
 With background tasks enabled, **Bash** runs every command through the task manager,
 so the per-task output cap (50 MiB) and, on Linux, the per-task memory cap
 (`AGENT_CORE_TASK_MEM_CAP`) apply to foreground commands too. A command killed by

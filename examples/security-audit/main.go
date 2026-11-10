@@ -38,7 +38,7 @@ func main() {
 			"tracer": {
 				Description:    "traces a vulnerability candidate to its exact source location",
 				Prompt:         []string{"You trace a single security finding to the precise file and line. Use Read/Grep/Glob only. Report file:line and a one-line justification."},
-				Tools:          []string{"Read", "Grep", "Glob"},
+				Tools:          []string{tool.ReadName, tool.GrepName, tool.GlobName},
 				PermissionMode: permission.ModePlan,
 				MaxTurns:       12,
 			},

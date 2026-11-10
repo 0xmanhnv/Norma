@@ -71,6 +71,12 @@ func (c *Controller) approve() {
 	c.mode = c.target
 }
 
+// Names of the plan-mode tools, as the model sees them.
+const (
+	EnterPlanModeName = "EnterPlanMode"
+	ExitPlanModeName  = "ExitPlanMode"
+)
+
 // Tools returns the EnterPlanMode and ExitPlanMode tools bound to this
 // controller and approver.
 func Tools(c *Controller, approve Approver) []tool.CoreTool {
@@ -80,7 +86,7 @@ func Tools(c *Controller, approve Approver) []tool.CoreTool {
 // EnterTool lets the agent switch itself into plan mode mid-session.
 func EnterTool(c *Controller) tool.CoreTool {
 	return tool.Build(tool.Spec{
-		Name:        "EnterPlanMode",
+		Name:        EnterPlanModeName,
 		Description: "Switches into plan mode: explore and design before making any changes. While in plan mode you may only use read-only tools. Draft a plan, then call ExitPlanMode to request approval.",
 		Schema:      map[string]any{"type": "object", "properties": map[string]any{}},
 		ReadOnly:    func(json.RawMessage) bool { return true },
@@ -99,7 +105,7 @@ func EnterTool(c *Controller) tool.CoreTool {
 // mode so implementation can begin.
 func ExitTool(c *Controller, approve Approver) tool.CoreTool {
 	return tool.Build(tool.Spec{
-		Name:        "ExitPlanMode",
+		Name:        ExitPlanModeName,
 		Description: "Call when you have finished planning and are ready to implement. Presents your plan to the user for approval; on approval you may begin making changes.",
 		Prompt:      "Provide the complete plan as concise markdown steps in `plan`. Only call this after read-only exploration is done and the plan is ready.",
 		Schema: map[string]any{

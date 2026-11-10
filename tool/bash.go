@@ -53,7 +53,7 @@ func NewBash() CoreTool {
 		desc += " Set run_in_background to return immediately and read the output later."
 	}
 	return Build(Spec{
-		Name:        "Bash",
+		Name:        BashName,
 		Description: desc,
 		Prompt:      prompt,
 		Schema: map[string]any{

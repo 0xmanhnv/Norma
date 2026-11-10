@@ -25,6 +25,7 @@ import (
 	"sort"
 
 	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // Summarizer condenses messages into a digest. Injected so the host controls
@@ -59,8 +60,8 @@ func (c *Config) defaults() {
 // claude-code COMPACTABLE_TOOLS (file read, shell, grep/glob, web, edit/write);
 // deliberately excludes LS/MultiEdit/NotebookEdit.
 var compactableTools = map[string]bool{
-	"Read": true, "Bash": true, "Grep": true, "Glob": true,
-	"WebFetch": true, "web_search": true, "Edit": true, "Write": true,
+	tool.ReadName: true, tool.BashName: true, tool.GrepName: true, tool.GlobName: true,
+	tool.WebFetchName: true, tool.WebSearchName: true, tool.EditName: true, tool.WriteName: true,
 }
 
 // CompactableTools lists the tool names whose results MicroCompact may clear.

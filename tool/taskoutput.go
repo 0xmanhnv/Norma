@@ -12,7 +12,7 @@ import (
 // until it finishes.
 func NewTaskOutput() CoreTool {
 	return Build(Spec{
-		Name:        "TaskOutput",
+		Name:        TaskOutputName,
 		Description: "Reads the output of a background task started by Bash (run_in_background) or Monitor. You can also Read the task's output-file path directly. Set block=true to wait for the task to finish first.",
 		Prompt:      "Provide the task_id. With block=true the call waits until the task reaches a terminal state (up to timeout_ms) before returning its output.",
 		Schema: map[string]any{

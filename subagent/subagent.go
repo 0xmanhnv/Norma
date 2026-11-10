@@ -49,6 +49,9 @@ func depth(ctx context.Context) int {
 	return v
 }
 
+// ToolName is the Agent tool's name as the model sees it.
+const ToolName = "Agent"
+
 // NewTool builds the "Agent" CoreTool that dispatches to a named subagent.
 func NewTool(cfg Config) tool.CoreTool {
 	if cfg.MaxDepth <= 0 {
@@ -59,7 +62,7 @@ func NewTool(cfg Config) tool.CoreTool {
 		names += fmt.Sprintf("\n- %s: %s", n, d.Description)
 	}
 	return tool.Build(tool.Spec{
-		Name:        "Agent",
+		Name:        ToolName,
 		Description: "Delegates a self-contained sub-task to an isolated subagent that runs with its own prompt and tools, returning only its final answer. Use it to parallelize independent work or to keep large intermediate output out of the main context.",
 		Prompt:      "Available agent_type values:" + names,
 		Schema: map[string]any{

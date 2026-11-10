@@ -12,7 +12,7 @@ import (
 // NewLS builds the LS tool: lists the entries of a directory.
 func NewLS() CoreTool {
 	return Build(Spec{
-		Name:        "LS",
+		Name:        LSName,
 		Description: "Lists the files and subdirectories of a directory (non-recursive). Use Glob to match by pattern across depth, or Grep to search contents.",
 		Prompt:      "path may be absolute or relative to the working directory; defaults to the working directory.",
 		Schema: map[string]any{

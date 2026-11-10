@@ -16,7 +16,7 @@ import (
 // optional offset/limit.
 func NewRead() CoreTool {
 	return Build(Spec{
-		Name:        "Read",
+		Name:        ReadName,
 		Description: "Reads a file from the local filesystem and returns its contents with line numbers. Use offset/limit for large files. Always read a file before editing it.",
 		Prompt:      "file_path may be absolute or relative to the working directory. Output lines are prefixed with their 1-based line number.",
 		Schema: map[string]any{
@@ -255,7 +255,7 @@ func isBinary(data []byte) bool {
 // NewWrite builds the Write tool: creates or overwrites a file.
 func NewWrite() CoreTool {
 	return Build(Spec{
-		Name:        "Write",
+		Name:        WriteName,
 		Description: "Writes a file to the local filesystem, creating parent directories and overwriting any existing file. Prefer Edit for modifying existing files.",
 		Prompt:      "Provide the complete file contents — Write replaces the whole file.",
 		Schema: map[string]any{
@@ -304,7 +304,7 @@ func runWrite(_ context.Context, input json.RawMessage, tc *ToolContext) (Result
 // NewEdit builds the Edit tool: exact string replacement with uniqueness check.
 func NewEdit() CoreTool {
 	return Build(Spec{
-		Name:        "Edit",
+		Name:        EditName,
 		Description: "Performs an exact string replacement in a file. old_string must match exactly once unless replace_all is set. Read the file first so old_string matches precisely.",
 		Prompt:      "old_string must match the file exactly (whitespace included) and be unique unless replace_all is true. new_string must differ from old_string.",
 		Schema: map[string]any{

@@ -9,7 +9,7 @@ import (
 // NewTaskStop builds the TaskStop tool: kill a running background task (or all).
 func NewTaskStop() CoreTool {
 	return Build(Spec{
-		Name:        "TaskStop",
+		Name:        TaskStopName,
 		Description: "Stops a running background task, killing its process tree. Pass a task_id, or omit it to stop all running tasks.",
 		Prompt:      "Provide task_id to stop one task, or leave it empty to stop all running tasks.",
 		Schema: map[string]any{

@@ -12,7 +12,7 @@ import (
 // immediately. Inspect it with Read/TaskOutput and end it with TaskStop.
 func NewMonitor() CoreTool {
 	return Build(Spec{
-		Name:        "Monitor",
+		Name:        MonitorName,
 		Description: "Starts a long-running streaming process in the background (e.g. tail -f, watch, a dev server, a polling loop) and returns immediately with a task id and output-file path. Use Read or TaskOutput to inspect it and TaskStop to end it.",
 		Prompt:      "Provide a command that streams output over time. It always runs in the background; you are notified if it exits on its own.",
 		Schema: map[string]any{

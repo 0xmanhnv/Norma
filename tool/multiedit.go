@@ -13,7 +13,7 @@ import (
 // content; if any fails to match, nothing is written.
 func NewMultiEdit() CoreTool {
 	return Build(Spec{
-		Name:        "MultiEdit",
+		Name:        MultiEditName,
 		Description: "Applies several exact string replacements to a single file in one atomic operation. Edits are applied in order; if any old_string fails to match (or isn't unique without replace_all), the whole operation aborts and the file is left unchanged.",
 		Prompt:      "Use this instead of multiple Edit calls on the same file. Each edit's old_string must match the file as modified by the preceding edits. Read the file first.",
 		Schema: map[string]any{

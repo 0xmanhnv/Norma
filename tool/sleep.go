@@ -16,7 +16,7 @@ import (
 // promptly rather than blocking out the deadline.
 func NewSleep() CoreTool {
 	return Build(Spec{
-		Name:        "sleep",
+		Name:        SleepName,
 		Description: "Waits for N seconds, then returns. Use to let a backgrounded command make progress before reading its partial output with TaskOutput. Interrupted immediately if the run is paused or stopped.",
 		Schema: map[string]any{
 			"type": "object",

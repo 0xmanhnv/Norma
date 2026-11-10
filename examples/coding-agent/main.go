@@ -57,7 +57,7 @@ func main() {
 	// A PreToolUse hook that logs shell commands (could also block them).
 	hooks := hook.NewRegistry()
 	hooks.On(hook.PreToolUse, func(_ context.Context, ev hook.Event) hook.Result {
-		if ev.ToolName == "Bash" {
+		if ev.ToolName == tool.BashName {
 			fmt.Fprintf(os.Stderr, "\x1b[2m[hook] shell: %s\x1b[0m\n", string(ev.Input))
 		}
 		return hook.Result{}
