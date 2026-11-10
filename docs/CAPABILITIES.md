@@ -1,7 +1,7 @@
 # Capability matrix
 
 What Corvid can do, which package owns it, how you turn it on, and where to read more.
-Everything here is verified against the source on `patches`. "Default" means it is
+Everything here is verified against the source on `main`. "Default" means it is
 active without any configuration; "opt-in" means you set the listed `Options` field.
 
 ## Core (always on)
