@@ -75,7 +75,7 @@ func (s *TodoStore) Tool() CoreTool {
 	return Build(Spec{
 		Name:        TodoWriteName,
 		Description: "Records and updates a structured todo list for the current task. Use it to plan multi-step work and to mark progress — replace the whole list each call, marking exactly one item in_progress while working.",
-		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions. Optional ref: when a todo tracks a specific host record (an intent or a coverage cell), attach its id in ref so the host can confirm completion from its own records instead of your manual mark; leave ref out for a plain item.",
+		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions. Optional ref links a todo to a host record.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
