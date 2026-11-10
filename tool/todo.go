@@ -43,7 +43,29 @@ type Todo struct {
 	// Ref optionally links this todo to a host record (see TodoRef). Empty =
 	// a free-text todo, the default and the backward-compatible behavior: a
 	// todo written without a ref decodes to the zero TodoRef.
+	//
+	// `omitempty` does not drop a zero struct, so MarshalJSON below omits an
+	// empty ref by hand — a ref-less todo must serialize exactly as it did
+	// before this field existed ({"content","status"}), or consumers that
+	// re-emit the list (e.g. todo self-heal) would start carrying a stray
+	// "ref":{} that strict decoders reject.
 	Ref TodoRef `json:"ref,omitempty"`
+}
+
+// MarshalJSON writes a todo, omitting an empty ref so a ref-less todo keeps the
+// exact {"content","status"} wire form it had before Ref was added.
+func (t Todo) MarshalJSON() ([]byte, error) {
+	type todoJSON struct {
+		Content string     `json:"content"`
+		Status  TodoStatus `json:"status"`
+		Ref     *TodoRef   `json:"ref,omitempty"`
+	}
+	tj := todoJSON{Content: t.Content, Status: t.Status}
+	if !t.Ref.Empty() {
+		r := t.Ref
+		tj.Ref = &r
+	}
+	return json.Marshal(tj)
 }
 
 // TodoStore holds the current todo list across tool calls. It is safe for

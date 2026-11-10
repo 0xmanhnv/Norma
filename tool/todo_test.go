@@ -2,6 +2,7 @@ package tool
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +43,42 @@ func TestTodoRefDecodes(t *testing.T) {
 				t.Fatalf("ref = %+v, want %+v", td.Ref, tc.want)
 			}
 		})
+	}
+}
+
+// A ref-less todo must marshal to exactly {"content","status"} — no "ref":{} —
+// so consumers that re-emit the list and strict decoders keep working.
+func TestTodoMarshalOmitsEmptyRef(t *testing.T) {
+	b, err := json.Marshal(Todo{Content: "map the API", Status: TodoPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(b); got != `{"content":"map the API","status":"pending"}` {
+		t.Fatalf("empty-ref todo changed wire form: %s", got)
+	}
+	// decoded into a string-only shape (the self-heal path), it must not error.
+	var shape struct {
+		Content string `json:"content"`
+		Status  string `json:"status"`
+	}
+	if err := json.Unmarshal(b, &shape); err != nil {
+		t.Fatalf("string-only decode of a ref-less todo failed: %v", err)
+	}
+}
+
+// A linked todo still carries its ref on the wire, and round-trips.
+func TestTodoMarshalKeepsRef(t *testing.T) {
+	in := Todo{Content: "sqli", Status: TodoCompleted, Ref: TodoRef{CoverageCell: "svc:h|CWE-89"}}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"ref":{"coverage_cell":"svc:h|CWE-89"}`) {
+		t.Fatalf("linked todo dropped its ref: %s", b)
+	}
+	var out Todo
+	if err := json.Unmarshal(b, &out); err != nil || out.Ref != in.Ref {
+		t.Fatalf("round-trip lost ref: out=%+v err=%v", out, err)
 	}
 }
 
