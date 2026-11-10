@@ -428,22 +428,22 @@ the iterator and reacts to each kind; the final event is always `KindResult`.
 ```mermaid
 sequenceDiagram
     participant Host
-    participant Loop as harness loop
+    participant H as harness loop
     participant Model as llm.Provider
     participant Tool
 
-    Host->>Loop: range Session.Prompt(ctx, input)
-    Loop->>Model: stream turn
-    Model-->>Loop: text / thinking / tool_use deltas
-    Loop-->>Host: KindThinking, KindText
-    Loop-->>Host: KindToolUse
-    Loop->>Tool: execute (parallel if concurrency-safe)
-    Tool-->>Loop: result (+ progress)
-    Loop-->>Host: KindProgress, KindToolResult
-    Loop-->>Host: KindUsage (cumulative)
-    Loop->>Model: next turn (results appended)
-    Model-->>Loop: final text, no tools
-    Loop-->>Host: KindResult (Terminal)
+    Host->>H: range Session.Prompt(ctx, input)
+    H->>Model: stream turn
+    Model-->>H: text / thinking / tool_use deltas
+    H-->>Host: KindThinking, KindText
+    H-->>Host: KindToolUse
+    H->>Tool: execute (parallel if concurrency-safe)
+    Tool-->>H: result (+ progress)
+    H-->>Host: KindProgress, KindToolResult
+    H-->>Host: KindUsage (cumulative)
+    H->>Model: next turn (results appended)
+    Model-->>H: final text, no tools
+    H-->>Host: KindResult (Terminal)
 ```
 
 Tools begin executing the moment their `tool_use` block finishes streaming
