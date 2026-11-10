@@ -17,7 +17,7 @@ var skipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": tru
 // NewGlob builds the Glob tool: find files by pattern, newest first.
 func NewGlob() CoreTool {
 	return Build(Spec{
-		Name:        "Glob",
+		Name:        GlobName,
 		Description: "Finds files whose path matches a glob pattern (supports ** for any depth, e.g. \"**/*.go\"). Returns paths sorted by modification time, newest first.",
 		Prompt:      "Use this instead of `find`. The pattern matches paths relative to the search directory.",
 		Schema: map[string]any{
@@ -138,7 +138,7 @@ const grepDescription = "A powerful search tool built on ripgrep\n" +
 
 func NewGrep() CoreTool {
 	return Build(Spec{
-		Name:        "Grep",
+		Name:        GrepName,
 		Description: grepDescription,
 		Schema: map[string]any{
 			"type": "object",

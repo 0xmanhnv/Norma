@@ -830,7 +830,7 @@ func todoReminderTurnCounts(msgs []llm.Message) (sinceWrite, sinceReminder int) 
 			continue
 		}
 		if !foundWrite {
-			if messageHasToolUse(m, "TodoWrite") {
+			if messageHasToolUse(m, tool.TodoWriteName) {
 				foundWrite = true
 			} else {
 				sinceWrite++

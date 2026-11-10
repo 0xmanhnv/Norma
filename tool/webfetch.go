@@ -48,7 +48,7 @@ type WebFetchConfig struct {
 // of DefaultTools and requires permission to run.
 func NewWebFetch(cfg WebFetchConfig) CoreTool {
 	return Build(Spec{
-		Name:        "WebFetch",
+		Name:        WebFetchName,
 		Description: "Fetches an HTTP(S) HTML page, documentation page, or API response and returns it as Markdown. Do not use this tool for static assets, including JavaScript, CSS, source maps, images, fonts, audio, or video—even if their URLs are found in a fetched page or explicitly requested. Fetch the owning page instead. Set `extract=true` to list comments, scripts, stylesheets, endpoints, forms, links, and meta tags. Listed asset URLs are for inspection only and must not be fetched. Large responses may be truncated. This makes an external network request.",
 		Schema: map[string]any{
 			"type": "object",

@@ -10,7 +10,7 @@ import (
 // NewTaskList builds the TaskList tool: enumerate this session's background tasks.
 func NewTaskList() CoreTool {
 	return Build(Spec{
-		Name:        "TaskList",
+		Name:        TaskListName,
 		Description: "Lists the background tasks started in this session with their status, exit code, and command.",
 		Schema:      map[string]any{"type": "object", "properties": map[string]any{}},
 		ReadOnly:    always,

@@ -11,6 +11,12 @@ import (
 	"github.com/0xmanhnv/corvid/tool"
 )
 
+// Names of the memory tools, as the model sees them.
+const (
+	RecallMemoryName = "RecallMemory"
+	RecordMemoryName = "RecordMemory"
+)
+
 // Tools returns the RecallMemory and RecordMemory tools bound to a store.
 func Tools(s *Store) []tool.CoreTool {
 	return []tool.CoreTool{RecallTool(s), RecordTool(s)}
@@ -19,7 +25,7 @@ func Tools(s *Store) []tool.CoreTool {
 // RecallTool lets the agent read memories relevant to a query.
 func RecallTool(s *Store) tool.CoreTool {
 	return tool.Build(tool.Spec{
-		Name:        "RecallMemory",
+		Name:        RecallMemoryName,
 		Description: "Searches your long-term memory for facts relevant to a query and returns their full content. Use it when prior context (user preferences, project state, past decisions) would help.",
 		Schema: map[string]any{
 			"type":       "object",
@@ -50,7 +56,7 @@ func RecallTool(s *Store) tool.CoreTool {
 // RecordTool lets the agent persist a durable fact to memory.
 func RecordTool(s *Store) tool.CoreTool {
 	return tool.Build(tool.Spec{
-		Name:        "RecordMemory",
+		Name:        RecordMemoryName,
 		Description: "Saves a durable fact to long-term memory so it persists across sessions. Record stable facts (user preferences, project constraints, decisions) — not transient conversation detail.",
 		Prompt:      "type is one of: user (about the user), feedback (how you should work), project (ongoing work/constraints), reference (external resources). Give a short name and a one-line description.",
 		Schema: map[string]any{

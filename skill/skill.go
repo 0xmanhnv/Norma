@@ -87,7 +87,9 @@ func (r *Registry) List() []Skill {
 	return out
 }
 
-// Tool returns the Skill tool bound to this registry. Invoking it with a skill
+// ToolName is the Skill tool's name as the model sees it.
+const ToolName = "Skill"
+
 // Listing budget: the available-skills block is regenerated every turn inside
 // the Skill tool's prompt, so a large registry would inflate context on every
 // request. Cap the total and clip over-long descriptions; once the budget is hit
@@ -98,11 +100,12 @@ const (
 	maxSkillDescChars    = 500
 )
 
+// Tool returns the Skill tool bound to this registry. Invoking it with a skill
 // name returns that skill's instructions for the agent to follow.
 func (r *Registry) Tool() tool.CoreTool {
 	avail := r.listing()
 	return tool.Build(tool.Spec{
-		Name:        "Skill",
+		Name:        ToolName,
 		Description: "Invokes a named skill — a reusable procedure — and returns its step-by-step instructions for you to follow. Use a skill when the task matches one of the available skills below.",
 		Prompt:      "Available skills:" + avail,
 		Schema: map[string]any{

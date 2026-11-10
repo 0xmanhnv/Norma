@@ -40,7 +40,7 @@ type AskUserFunc func(ctx context.Context, q Question) Answer
 // (with options) and continue with the answer — without ending the turn.
 func NewAskUserQuestion(ask AskUserFunc) CoreTool {
 	return Build(Spec{
-		Name:        "AskUserQuestion",
+		Name:        AskUserQuestionName,
 		Description: "Asks the user one or more multiple-choice questions and returns their answers. Use it when you genuinely need the user to decide between options to proceed — not for things you can determine yourself or sensible defaults.",
 		Prompt:      "Provide each question with a short header, the question text, and 2-4 concise options (label + one-line description). Set multiSelect when several options may apply. Ask only when blocked on a decision that is the user's to make.",
 		Schema: map[string]any{

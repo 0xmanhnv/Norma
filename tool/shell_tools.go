@@ -86,7 +86,7 @@ func NewShellOpen() CoreTool {
 		"quiet_ms":         intProp("Optional: milliseconds without output after which a command counts as finished (default 8000)."),
 		"startup_grace_ms": intProp("Optional: startup grace period in milliseconds during which silence does not count as finished (default 15000)."),
 	}, "command")
-	return sessTool("shell_open", desc, schema, false, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellOpenName, desc, schema, false, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -177,7 +177,7 @@ func NewShellSend() CoreTool {
 		"quiet_ms":     intProp("Optional: milliseconds without output after which the command counts as finished (default 8000)."),
 		"timeout_ms":   intProp("Optional: hard limit on the wait, in milliseconds (default 120000)."),
 	}, "session_id")
-	return sessTool("shell_send", desc, schema, false, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellSendName, desc, schema, false, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -260,7 +260,7 @@ func NewShellRead() CoreTool {
 		"drain":        boolProp("stream: return all output since the last read, ignoring the limits."),
 	}, "session_id")
 	// per-session read cursor kept here (tool-side) so unspecified reads continue.
-	return sessTool("shell_read", desc, schema, true, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellReadName, desc, schema, true, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -309,7 +309,7 @@ func NewShellRead() CoreTool {
 // NewShellClose closes a session.
 func NewShellClose() CoreTool {
 	schema := obj(map[string]any{"session_id": strProp("Session id.")}, "session_id")
-	return sessTool("shell_close", "Closes an interactive session: kills its process and releases the PTY.", schema, false, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellCloseName, "Closes an interactive session: kills its process and releases the PTY.", schema, false, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -333,7 +333,7 @@ func NewShellClose() CoreTool {
 
 // NewShellList lists sessions.
 func NewShellList() CoreTool {
-	return sessTool("shell_list", "Lists all open interactive sessions and their state.", obj(map[string]any{}), true, func(_ context.Context, _ json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellListName, "Lists all open interactive sessions and their state.", obj(map[string]any{}), true, func(_ context.Context, _ json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil

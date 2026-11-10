@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/0xmanhnv/corvid/compaction"
+	"github.com/0xmanhnv/corvid/fold"
 	"github.com/0xmanhnv/corvid/tool"
 )
 
@@ -26,6 +27,20 @@ func TestCompactableToolsAreRealToolNames(t *testing.T) {
 	for _, n := range compaction.CompactableTools() {
 		if !have[n] {
 			t.Errorf("compaction lists %q, which is not a default tool name", n)
+		}
+	}
+}
+
+// fold stays free of harness imports, so it names its default tools as
+// literals; they must still be real tool names.
+func TestFoldDefaultToolsAreRealToolNames(t *testing.T) {
+	have := map[string]bool{}
+	for _, ct := range tool.DefaultTools() {
+		have[ct.Name()] = true
+	}
+	for _, n := range fold.NeverPreserveRecentTools {
+		if !have[n] {
+			t.Errorf("fold.NeverPreserveRecentTools lists %q, which is not a default tool name", n)
 		}
 	}
 }
