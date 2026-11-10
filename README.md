@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/banner-dark.svg">
+    <img alt="corvid, an agent harness for Go" src="docs/brand/banner-light.svg" width="640">
+  </picture>
+</p>
+
 # Corvid
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/0xmanhnv/corvid.svg)](https://pkg.go.dev/github.com/0xmanhnv/corvid)
