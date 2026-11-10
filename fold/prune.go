@@ -329,7 +329,7 @@ func stripOrphanedToolResults(msgs []CoreMessage) []CoreMessage {
 // stripOrphanedReasoning drops a reasoning run that no longer precedes an
 // assistant act.
 //
-// This is a hot path, not dead code: Norma projects thinking blocks explicitly,
+// This is a hot path, not dead code: Corvid projects thinking blocks explicitly,
 // and Anthropic rejects a replayed request whose thinking block has lost the
 // tool_use it belonged to.
 func stripOrphanedReasoning(msgs []CoreMessage) []CoreMessage {

@@ -51,7 +51,7 @@ func AdjustBoundariesForToolPairs(start, end int, msgs []CoreMessage, maxScan in
 // the assistant act it belongs to stay together.
 //
 // Anthropic validates that a replayed thinking block still precedes the tool_use
-// it reasoned about; splitting them makes the request fail. Norma projects
+// it reasoned about; splitting them makes the request fail. Corvid projects
 // thinking explicitly, so this is a hot path rather than dead code.
 func AdjustBoundariesForReasoningPairs(start, end int, msgs []CoreMessage) (int, int) {
 	if start < 0 || end >= len(msgs) || start > end {

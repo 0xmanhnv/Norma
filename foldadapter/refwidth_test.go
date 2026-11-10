@@ -7,8 +7,8 @@ package foldadapter
 import (
 	"testing"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // A tag for a widened ref must round-trip exactly like a five-digit one;

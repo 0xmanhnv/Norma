@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // origin records where a projected core came from, so reassembly can put it

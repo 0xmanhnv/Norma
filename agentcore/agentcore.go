@@ -12,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xmanhnv/norma/compaction"
-	"github.com/0xmanhnv/norma/harness"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/memory"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/plan"
-	"github.com/0xmanhnv/norma/skill"
-	"github.com/0xmanhnv/norma/tool"
-	"github.com/0xmanhnv/norma/transcript"
+	"github.com/0xmanhnv/corvid/compaction"
+	"github.com/0xmanhnv/corvid/harness"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/memory"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/plan"
+	"github.com/0xmanhnv/corvid/skill"
+	"github.com/0xmanhnv/corvid/tool"
+	"github.com/0xmanhnv/corvid/transcript"
 )
 
 // Options configures a Session (FR-07).

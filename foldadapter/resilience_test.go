@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // buildWorkingSession runs a cooperative session far enough to have real blocks,

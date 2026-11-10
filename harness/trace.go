@@ -4,7 +4,7 @@ import (
 	"context"
 	"iter"
 
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // Tracer receives spans for model calls and tool calls. It is a minimal,

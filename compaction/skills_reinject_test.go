@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // With many skills behind the boundary whose combined size exceeds the total

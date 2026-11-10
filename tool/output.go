@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // Codes for a declared output that could not be turned into a tool_result.

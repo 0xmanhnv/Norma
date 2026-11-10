@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 func userText(s string) llm.Message {

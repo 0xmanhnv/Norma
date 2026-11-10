@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // rawInputTool is the optional opt-out from schema validation. Discovered by

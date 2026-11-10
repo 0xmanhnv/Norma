@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 )
 
-// ChildProcess controls how every subprocess norma starts is launched: Bash
+// ChildProcess controls how every subprocess corvid starts is launched: Bash
 // (sync and managed), background tasks, interactive shell sessions, Grep's
 // ripgrep and stdio MCP servers. nil (the default) keeps the historical
 // behaviour: same user, full parent environment.
@@ -90,6 +90,6 @@ func PrepareChild(cmd *exec.Cmd, extra []string, env bool) error {
 	return nil
 }
 
-// applyChild is PrepareChild for norma's own shells, whose env is already built
+// applyChild is PrepareChild for corvid's own shells, whose env is already built
 // by withEnvIn.
 func applyChild(cmd *exec.Cmd) error { return PrepareChild(cmd, nil, false) }

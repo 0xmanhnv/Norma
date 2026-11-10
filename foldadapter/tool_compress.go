@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // newCompressTool builds the one tool fold exposes.

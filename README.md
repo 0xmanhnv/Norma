@@ -1,18 +1,20 @@
-# Norma
+# Corvid
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/0xmanhnv/norma.svg)](https://pkg.go.dev/github.com/0xmanhnv/norma)
+[![Go Reference](https://pkg.go.dev/badge/github.com/0xmanhnv/corvid.svg)](https://pkg.go.dev/github.com/0xmanhnv/corvid)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8.svg)](go.mod)
 
-A general-purpose **Agent Harness SDK in Go**. Norma is the engine that turns a language model into an autonomous agent: a streaming tool-use loop that lets a model read, run, and reason its way through a task while you keep control of the prompt, the tools, and the safety boundary.
+A general-purpose **Agent Harness SDK in Go**. Corvid is the engine that turns a language model into an autonomous agent: a streaming tool-use loop that lets a model read, run, and reason its way through a task while you keep control of the prompt, the tools, and the safety boundary.
 
 You point it at any model (via the **Anthropic** or **OpenAI** wire format — including the OpenAI *Responses* API), drive it with a **host-controlled system prompt**, and extend it with your own tools, permission policy, hooks, and subagents. It ships as a focused, near-dependency-free library — the loop, scheduler, and safety boundary are provider- and scenario-agnostic: they don't know whether they're driving a coding agent, a security auditor, or a customer-support bot.
 
 **What you get out of the box:** dual-format streaming, a fail-closed tool system with the standard file/shell toolset, a four-stage permission pipeline, automatic context-window management, lifecycle hooks, subagents, MCP, plan mode, long-term memory, a skill system, background tasks, and multi-agent coordination — all behind one stateful `Session`.
 
-Module path: `github.com/0xmanhnv/norma` · Go 1.26+ (per [`go.mod`](go.mod); the loop streams through `iter`, added in Go 1.23).
+Module path: `github.com/0xmanhnv/corvid` · Go 1.26+ (per [`go.mod`](go.mod); the loop streams through `iter`, added in Go 1.23).
 
 This is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma) (v0.4.4). Changes on top of upstream live on the `patches` branch and are released as `v0.4.4-p.N` tags. See [Acknowledgements](#acknowledgements).
+
+Until November 2026 this fork was published as `github.com/0xmanhnv/norma`; the old URL redirects here, but Go imports must move to `github.com/0xmanhnv/corvid`.
 
 > **New to the codebase?** Read the [architecture overview](docs/ARCHITECTURE.md) (diagrams + package map) or jump into the [documentation index](docs/README.md).
 
@@ -112,29 +114,29 @@ Implements the core loop, dual providers, tools, the full permission pipeline, c
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** — the whole system with verified Mermaid diagrams and a package map.
-- **[Documentation index](docs/README.md)** — reading paths for using Norma vs contributing to it.
+- **[Documentation index](docs/README.md)** — reading paths for using Corvid vs contributing to it.
 - **Subsystem guides** — one page each: [agent loop](docs/guides/agent-loop.md) · [tools](docs/guides/tools.md) · [permissions](docs/guides/permissions.md) · [compaction](docs/guides/compaction.md) · [subagents](docs/guides/subagents.md) · [MCP](docs/guides/mcp.md) · [skills](docs/guides/skills.md) · [memory](docs/guides/memory.md) · [jobs](docs/guides/jobs.md).
 - **[Contributing](CONTRIBUTING.md)** — build, test, layout, and conventions.
-- **Package reference** — [pkg.go.dev/github.com/0xmanhnv/norma](https://pkg.go.dev/github.com/0xmanhnv/norma); every package opens with a precise doc comment.
+- **Package reference** — [pkg.go.dev/github.com/0xmanhnv/corvid](https://pkg.go.dev/github.com/0xmanhnv/corvid); every package opens with a precise doc comment.
 
 ## Acknowledgements
 
-Norma is a maintained fork of **[Autumn-27/norma](https://github.com/Autumn-27/norma)** by Autumn-27, the original author and copyright holder, released under the Apache License 2.0. This fork builds on that work; the upstream copyright notice is preserved in [`LICENSE`](LICENSE). Development of the fork happens on the `patches` branch.
+Corvid is a maintained fork of **[Autumn-27/norma](https://github.com/Autumn-27/norma)** by Autumn-27, the original author and copyright holder, released under the Apache License 2.0. This fork builds on that work; the upstream copyright notice is preserved in [`LICENSE`](LICENSE). Development of the fork happens on the `patches` branch.
 
-Norma's archive-backed context-compression package (`fold` / `foldadapter`) uses code
+Corvid's archive-backed context-compression package (`fold` / `foldadapter`) uses code
 from **acp-kernel** by ranxianglei (<https://github.com/ranxianglei/acp-kernel>),
 including code that acp-kernel took from **billion-context**
 (<https://github.com/ranxianglei/billion-context>). Both are MIT-licensed; acp-kernel
 releases from v0.0.98 on add an attribution term, which this notice and
-[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) satisfy for Norma. If you build a
-user-facing product on Norma that ships this package, see the downstream obligation in
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) satisfy for Corvid. If you build a
+user-facing product on Corvid that ships this package, see the downstream obligation in
 that file.
 
 ## License
 
 Apache License 2.0 — see [`LICENSE`](LICENSE). Copyright 2026 Autumn-27.
 
-Norma also bundles source derived from third-party work under its own license: the
+Corvid also bundles source derived from third-party work under its own license: the
 `fold` / `foldadapter` compression engine is ported from acp-kernel (MIT, plus an
 attribution term for code taken from v0.0.98 on). The required notices and full license
 texts are listed in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).

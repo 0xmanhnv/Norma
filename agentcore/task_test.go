@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xmanhnv/norma/harness"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/harness"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // TestBackgroundTaskEndToEnd proves the full Session path: a backgrounded Bash
@@ -66,7 +66,7 @@ func TestBackgroundTaskEndToEnd(t *testing.T) {
 	}
 
 	// The session's task temp dir exists while the task runs.
-	taskDir := filepath.Join(os.TempDir(), "norma", sess.SessionID())
+	taskDir := filepath.Join(os.TempDir(), "corvid", sess.SessionID())
 	if _, err := os.Stat(taskDir); err != nil {
 		t.Fatalf("task dir should exist: %v", err)
 	}

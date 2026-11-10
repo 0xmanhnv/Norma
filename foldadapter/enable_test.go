@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/agentcore"
-	"github.com/0xmanhnv/norma/compaction"
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/harness"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/agentcore"
+	"github.com/0xmanhnv/corvid/compaction"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/harness"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 func baseOptions() agentcore.Options {

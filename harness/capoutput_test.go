@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // The global post-tool net caps an oversized text block regardless of the tool.

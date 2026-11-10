@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // The ref tag tells the model how to address a message when compressing.

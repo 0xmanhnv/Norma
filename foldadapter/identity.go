@@ -1,4 +1,4 @@
-// Package foldadapter wires the pure fold engine into Norma: it projects
+// Package foldadapter wires the pure fold engine into Corvid: it projects
 // llm.Message into fold's flat representation and back, persists state and
 // archives, and exposes the Compress tool.
 //
@@ -11,7 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/0xmanhnv/norma/fold"
+	"github.com/0xmanhnv/corvid/fold"
 )
 
 // DeriveMessageID computes a message's stable identity.

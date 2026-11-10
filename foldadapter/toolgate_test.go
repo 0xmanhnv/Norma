@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // harness.execOne validates a call against the tool's InputSchema before

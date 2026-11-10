@@ -2,7 +2,7 @@
 
 > Package `tool` · `tool/tool.go`, `tool/registry.go`, `tool/output.go`
 
-A tool is a capability the agent can invoke. Norma defines a small contract, a
+A tool is a capability the agent can invoke. Corvid defines a small contract, a
 fail-closed factory, and a set of built-ins — and makes adding your own a matter of
 filling in a `Spec`.
 

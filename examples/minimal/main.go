@@ -1,4 +1,4 @@
-// Example minimal is the smallest useful Norma agent: a provider, a
+// Example minimal is the smallest useful Corvid agent: a provider, a
 // host-owned system prompt, the default file/shell toolset, and the streaming
 // loop. It is the quickstart from the README, as a runnable program.
 //
@@ -15,10 +15,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/0xmanhnv/norma/agentcore"
-	"github.com/0xmanhnv/norma/harness"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/permission"
+	"github.com/0xmanhnv/corvid/agentcore"
+	"github.com/0xmanhnv/corvid/harness"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
 )
 
 func main() {

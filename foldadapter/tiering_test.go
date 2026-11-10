@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/fold"
+	"github.com/0xmanhnv/corvid/fold"
 )
 
 // Multi-tier compression is what keeps summaries from accumulating without

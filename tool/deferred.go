@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/0xmanhnv/norma/permission"
+	"github.com/0xmanhnv/corvid/permission"
 )
 
 // Deferred tools: a mechanism to keep a tool callable while withholding its schema

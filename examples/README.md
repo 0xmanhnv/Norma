@@ -1,6 +1,6 @@
 # Examples
 
-Each example is a self-contained `package main` that wires Norma for one scenario.
+Each example is a self-contained `package main` that wires Corvid for one scenario.
 They share no framework code — the point is to show how little it takes to assemble an
 agent from the library, and how the same loop drives very different behavior depending
 only on the prompt, the tools, and the policy you hand it.

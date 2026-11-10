@@ -3,7 +3,7 @@ package foldadapter
 import (
 	"path/filepath"
 
-	"github.com/0xmanhnv/norma/fold"
+	"github.com/0xmanhnv/corvid/fold"
 )
 
 // maxInheritDepth bounds the walk up the parent chain. Deep enough for any real

@@ -1,19 +1,19 @@
 # Third-Party Licenses
 
-Norma is licensed under the Apache License 2.0 (see [`LICENSE`](LICENSE)). It also
+Corvid is licensed under the Apache License 2.0 (see [`LICENSE`](LICENSE)). It also
 bundles source derived from third-party work that is distributed under its own
 license. Those components, and the notices their licenses require, are listed below.
 
 ## acp-kernel
 
-The model-driven, archive-backed context-compression engine in Norma (`fold` /
+The model-driven, archive-backed context-compression engine in Corvid (`fold` /
 `foldadapter`) is a Go port of **acp-kernel** by ranxianglei —
 <https://github.com/ranxianglei/acp-kernel>. The package was named
 `noa` / `noaadapter` before November 2026.
 
 acp-kernel was plain MIT up to and including v0.0.97. From v0.0.98 (upstream commit
 `9e726fb`, 2026-09-27) its license is MIT **plus an Additional Term** requiring
-attribution on product surfaces. Norma therefore carries two notices: the MIT license
+attribution on product surfaces. Corvid therefore carries two notices: the MIT license
 below for code ported up to v0.0.97, and the
 [post-v0.0.98 license](#code-ported-from-v0098-or-later-mit-plus-additional-term) for
 anything ported from v0.0.98 or later.
@@ -26,7 +26,7 @@ The following paths are derived, in whole or in part, from that work:
   compression rules in [`fold/prompts_rules.go`](fold/prompts_rules.go) are ported
   verbatim from acp-kernel's `src/compression-rules.ts` (with four deliberate,
   documented deviations noted in that file).
-- `foldadapter/` — the adapter that wires the `fold` core into a Norma session.
+- `foldadapter/` — the adapter that wires the `fold` core into a Corvid session.
 
 The original port tracks acp-kernel v0.0.69. Later fixes were ported from acp-kernel's
 own MIT source up to and including v0.0.97 (commit `1d42ec2`). Changes taken from
@@ -173,7 +173,7 @@ https://github.com/ranxianglei/acp-kernel （及 https://github.com/ranxianglei/
 
 **billion-context** by ranxianglei — <https://github.com/ranxianglei/billion-context> —
 is the project acp-kernel was extracted for, and some acp-kernel code originated there.
-Norma takes nothing from billion-context directly; it receives that code only through
+Corvid takes nothing from billion-context directly; it receives that code only through
 acp-kernel, under acp-kernel's license above. It is named here because the acp-kernel
 attribution term asks for billion-context to be credited "where applicable", and one
 ported function is applicable:
@@ -187,7 +187,7 @@ billion-context's own license is MIT with an equivalent attribution term.
 
 ## Downstream obligation
 
-If you build a product or service on Norma that end users can see or interact with,
+If you build a product or service on Corvid that end users can see or interact with,
 and it ships the `fold` / `foldadapter` package, the acp-kernel Additional Term applies
 to you too: state, in your product's documentation or on its home page or
 About / Credits / Acknowledgements page, that it uses acp-kernel and billion-context,

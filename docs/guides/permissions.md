@@ -2,7 +2,7 @@
 
 > Package `permission` · `permission/permission.go`
 
-The permission package is Norma's safety boundary. It decides, for every tool call,
+The permission package is Corvid's safety boundary. It decides, for every tool call,
 whether to **allow**, **deny**, or **ask** — combining the tool's own verdict, the
 host's rules, and the active mode into one decision.
 

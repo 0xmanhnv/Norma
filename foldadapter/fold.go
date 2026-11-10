@@ -1,9 +1,9 @@
 package foldadapter
 
 import (
-	"github.com/0xmanhnv/norma/agentcore"
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/agentcore"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // Enable wires fold into a set of agentcore Options.

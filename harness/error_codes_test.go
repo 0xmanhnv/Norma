@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xmanhnv/norma/compaction"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/compaction"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // fnTool builds a read-only tool whose Run is fn.

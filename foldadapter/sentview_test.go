@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // Every pressure decision fold makes keys off ONE number: the token count View
@@ -30,7 +30,7 @@ import (
 //	                                     messages (orphaned tool pairs, absorbed
 //	                                     and filtered messages) every turn
 //
-// Norma's Session.resolveTokenCount does neither: it sums Project(msgs) — the
+// Corvid's Session.resolveTokenCount does neither: it sums Project(msgs) — the
 // whole raw history — so the number only ever grows and a compression that
 // removes 40k tokens from the request leaves it untouched.
 
@@ -370,7 +370,7 @@ func TestProviderReportedSizeIsNotDiscardedAsDrift(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // Upstream fixed the reporting surfaces alongside the transform (#289 Fix B:
-// acp_status must read the sent view, not the raw estimate). Norma's equivalent
+// acp_status must read the sent view, not the raw estimate). Corvid's equivalent
 // is Session.tokensBefore, which the Compress panel prints as its headline
 // "before" figure — so a wrong count is not only acted on, it is reported to
 // the model and to the user as fact.

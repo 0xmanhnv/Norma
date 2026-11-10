@@ -2,7 +2,7 @@
 
 > Package `harness` · `harness/query.go`, `harness/event.go`, `harness/streaming.go`
 
-The loop is the heart of Norma. Everything else — tools, permissions, compaction,
+The loop is the heart of Corvid. Everything else — tools, permissions, compaction,
 subagents — is something the loop calls into. This guide explains what one call to
 `Session.Prompt` actually does.
 

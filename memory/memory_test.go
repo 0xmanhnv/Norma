@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 func TestSaveScanReadRelevant(t *testing.T) {
