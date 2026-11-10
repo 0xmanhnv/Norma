@@ -97,7 +97,7 @@ func Age(m Memory, now time.Time) string {
 	}
 }
 
-// stalenessNote returns a caveat for memories older than a day, or "" if fresh.
+// stalenessNote returns a caveat for memories two days old or older, or "" if fresh.
 func stalenessNote(m Memory, now time.Time) string {
 	if m.ModTime.IsZero() || now.Sub(m.ModTime).Hours() < 48 {
 		return ""

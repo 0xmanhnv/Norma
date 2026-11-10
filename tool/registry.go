@@ -56,7 +56,7 @@ func (r *Registry) Schemas() []llm.ToolSchema {
 }
 
 // DefaultTools returns the core toolset every agent gets: the file/shell tools
-// (Read, Write, Edit, MultiEdit, LS, Glob, Grep, Bash) plus Sleep — a small
+// (Read, Write, Edit, MultiEdit, LS, Glob, Grep, Bash) plus sleep — a small
 // context-cancellable wait that pairs with background execution. Network and
 // stateful tools (WebFetch, TodoWrite) remain opt-in via their own constructors.
 func DefaultTools() []CoreTool {

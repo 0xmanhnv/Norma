@@ -1,10 +1,12 @@
 // Package llm defines a vendor-neutral message model and a pluggable Provider
-// interface, with adapters that speak the Anthropic Messages API and the OpenAI
-// Chat Completions API. The internal model mirrors Anthropic's content-block
-// shape (the richer superset, including thinking and structured tool results);
-// the OpenAI adapter translates at its boundary. This lets the harness be
-// written once against a single representation while remaining compatible with
-// any model reachable through either wire format.
+// interface, with adapters that speak the Anthropic Messages API, the OpenAI
+// Chat Completions API and the OpenAI Responses API (FormatAnthropic,
+// FormatOpenAI, FormatOpenAIResponses). The internal model mirrors Anthropic's
+// content-block shape (the richer superset, including thinking and structured
+// tool results); the OpenAI adapters translate at their boundary. This lets the
+// harness be written once against a single representation while remaining
+// compatible with any model reachable through one of these wire formats.
+// Failures carry a stable Code (see Error, CodeOf, IsCode).
 package llm
 
 import "encoding/json"

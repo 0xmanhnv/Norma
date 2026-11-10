@@ -242,7 +242,8 @@ type PlanOptions struct {
 // MemoryOptions configures long-term memory.
 type MemoryOptions struct {
 	Store *memory.Store
-	// AutoInject prepends memories relevant to each prompt into the conversation.
+	// AutoInject appends the memories most relevant to each prompt to that
+	// prompt's user message.
 	AutoInject bool
 	// MaxInject caps auto-injected memories (default 3).
 	MaxInject int

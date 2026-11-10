@@ -115,7 +115,7 @@ Mutating tools (Write/Edit/Bash) prompt for approval unless `-yes` is set. Suppl
 go test ./...
 ```
 
-The suite runs offline. It covers the provider adapters over `httptest` SSE; the loop end-to-end with a scripted provider (tool execution, message threading, permission denial, max-turns, parallel reads); real tool execution in a temp dir; the permission pipeline matrix; compaction (auto-summary, circuit breaker, micro-compact); hooks (block/rewrite/Stop-gating); subagent dispatch + depth guard; and the MCP client over in-memory pipes.
+The suite runs offline. It covers the provider adapters over `httptest` SSE; the loop end-to-end with a scripted provider (tool execution, message threading, permission denial, max-turns, parallel reads); real tool execution in a temp dir; the permission pipeline matrix; compaction (auto-summary, circuit breaker, micro-compact); hooks (block/rewrite/Stop-gating); subagent dispatch + depth guard; the MCP client over in-memory pipes; and the docs themselves (`docs_test.go`: relative links and anchors, cited repository paths, Mermaid ids and labels).
 
 ## Scope
 

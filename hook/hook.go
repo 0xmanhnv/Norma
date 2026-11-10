@@ -1,7 +1,12 @@
-// Package hook provides Go-native lifecycle hooks (FR-08): callbacks fired at
-// eight points in the agent loop that can observe state, block or rewrite tool
-// calls, inject context, and gate the Stop transition. A Registry implements
-// harness.HookRunner, so wiring it into a Session needs no glue.
+// Package hook provides Go-native lifecycle hooks (FR-08): callbacks at eight
+// points of an agent's life that can observe state, block or rewrite tool calls,
+// inject context, and gate the Stop transition. A Registry implements
+// harness.HookRunner, so wiring it into a Session (Options.Hooks) needs no glue.
+//
+// The loop fires PreToolUse, PostToolUse / PostToolUseFailure and Stop;
+// agentcore.Session.Prompt fires SessionStart (on the first prompt) and
+// UserPromptSubmit; the subagent Agent tool fires SubagentStart. SessionEnd is
+// never fired for you: call FireSessionEnd when the host is done.
 package hook
 
 import (
