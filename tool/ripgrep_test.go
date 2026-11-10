@@ -9,9 +9,9 @@ import (
 )
 
 func TestRipgrepPathDisabled(t *testing.T) {
-	t.Setenv("NORMA_DISABLE_RIPGREP", "1")
+	t.Setenv("CORVID_DISABLE_RIPGREP", "1")
 	if RipgrepPath() != "" {
-		t.Fatal("NORMA_DISABLE_RIPGREP should force the Go implementation")
+		t.Fatal("CORVID_DISABLE_RIPGREP should force the Go implementation")
 	}
 }
 
@@ -20,8 +20,8 @@ func TestGrepViaRipgrepIfAvailable(t *testing.T) {
 		t.Skip("rg not installed — skipping the ripgrep-backed path")
 	}
 	// Use the existing rg; never auto-install during tests.
-	t.Setenv("NORMA_RIPGREP_INSTALL", "")
-	os.Unsetenv("NORMA_DISABLE_RIPGREP")
+	t.Setenv("CORVID_RIPGREP_INSTALL", "")
+	os.Unsetenv("CORVID_DISABLE_RIPGREP")
 
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "x.go"), []byte("package main\nfunc Zed(){}\n"), 0o644)
@@ -37,7 +37,7 @@ func TestGrepViaRipgrepIfAvailable(t *testing.T) {
 // unless the host opted in.
 func TestResolveRipgrepNeverInstallsByDefault(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no rg, no npm
-	t.Setenv("NORMA_RIPGREP_INSTALL", "")
+	t.Setenv("CORVID_RIPGREP_INSTALL", "")
 	called := false
 	orig := installRipgrep
 	installRipgrep = func() string { called = true; return "" }
@@ -45,7 +45,7 @@ func TestResolveRipgrepNeverInstallsByDefault(t *testing.T) {
 	if p := resolveRipgrep(); p != "" || called {
 		t.Fatalf("resolve = %q, install called = %v", p, called)
 	}
-	t.Setenv("NORMA_RIPGREP_INSTALL", "1")
+	t.Setenv("CORVID_RIPGREP_INSTALL", "1")
 	if resolveRipgrep(); !called {
 		t.Fatal("opt-in did not reach the installer")
 	}

@@ -9,7 +9,7 @@ import (
 
 func TestParseMCPsFrontmatter(t *testing.T) {
 	cases := map[string][]string{
-		"---\nname: a\nmcps: browser\n---\nbody":            {"browser"},
+		"---\nname: a\nmcps: browser\n---\nbody":             {"browser"},
 		"---\nname: b\nmcps: browser, nmap\n---\nbody":       {"browser", "nmap"},
 		"---\nname: c\nmcps: [browser, \"nmap\"]\n---\nbody": {"browser", "nmap"},
 	}

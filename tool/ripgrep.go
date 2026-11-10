@@ -20,11 +20,11 @@ import (
 // Nothing is installed unless the host asks for it. A search tool that reaches
 // the network and changes the machine on first use is a surprise in sandboxed
 // or egress-restricted deployments, so `npm install -g @vscode/ripgrep` runs
-// only through InstallRipgrep or with NORMA_RIPGREP_INSTALL=1.
+// only through InstallRipgrep or with CORVID_RIPGREP_INSTALL=1.
 //
 // Env controls:
-//   - NORMA_DISABLE_RIPGREP=1  force the pure-Go implementation (also used by tests)
-//   - NORMA_RIPGREP_INSTALL=1  opt in to the npm install when rg is missing
+//   - CORVID_DISABLE_RIPGREP=1  force the pure-Go implementation (also used by tests)
+//   - CORVID_RIPGREP_INSTALL=1  opt in to the npm install when rg is missing
 
 var (
 	rgOnce     sync.Once
@@ -35,7 +35,7 @@ var (
 // grep should be used. The heavy resolution (detect + optional npm install) runs
 // at most once per process.
 func RipgrepPath() string {
-	if os.Getenv("NORMA_DISABLE_RIPGREP") != "" {
+	if os.Getenv("CORVID_DISABLE_RIPGREP") != "" {
 		return ""
 	}
 	rgOnce.Do(func() { rgResolved = resolveRipgrep() })
@@ -45,7 +45,7 @@ func RipgrepPath() string {
 // EnsureRipgrep warms ripgrep resolution so the cost is paid at startup rather
 // than on the first Grep call. Hosts may call it once at boot. Returns the
 // resolved path ("" = Go fallback). It installs nothing unless
-// NORMA_RIPGREP_INSTALL=1 is set.
+// CORVID_RIPGREP_INSTALL=1 is set.
 func EnsureRipgrep() string { return RipgrepPath() }
 
 // InstallRipgrep runs `npm install -g @vscode/ripgrep` and returns the installed
@@ -61,7 +61,7 @@ func resolveRipgrep() string {
 	if p, err := exec.LookPath("rg"); err == nil {
 		return p
 	}
-	if os.Getenv("NORMA_RIPGREP_INSTALL") == "1" {
+	if os.Getenv("CORVID_RIPGREP_INSTALL") == "1" {
 		return installRipgrep()
 	}
 	return ""

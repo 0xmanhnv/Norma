@@ -114,8 +114,8 @@ func TestBraveHTTPError(t *testing.T) {
 func TestUnwrapDDGHref(t *testing.T) {
 	cases := map[string]string{
 		"//duckduckgo.com/l/?uddg=https%3A%2F%2Fx.com%2Fy&rut=z": "https://x.com/y",
-		"https://plain.example/path":                            "https://plain.example/path",
-		"":                                                      "",
+		"https://plain.example/path":                             "https://plain.example/path",
+		"":                                                       "",
 	}
 	for in, want := range cases {
 		if got := unwrapDDGHref(in); got != want {
