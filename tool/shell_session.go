@@ -14,11 +14,11 @@ import (
 	"github.com/hinshun/vt10x"
 )
 
-// Interactive PTY shell sessions (docs/交互式shell设计.md). A session is a persistent
-// pseudo-terminal running an interactive program (msfconsole / ssh / a REPL / …) that
-// the agent drives by sending input (text / named keys / raw bytes) and reading output
-// incrementally (raw stream) or as a rendered screen snapshot (vt10x). Sessions live on
-// the per-Session task Manager (tc.Tasks) and are cleaned up with it.
+// Interactive PTY shell sessions. A session is a persistent pseudo-terminal running
+// an interactive program (a REPL, a debugger, ssh, …) that the agent drives by
+// sending input (text / named keys / raw bytes) and reading output incrementally
+// (raw stream) or as a rendered screen snapshot (vt10x). Sessions live on the
+// per-Session task Manager (tc.Tasks) and are cleaned up with it.
 
 // Tunables.
 const (
@@ -65,7 +65,7 @@ type ptySession struct {
 	lastOut  time.Time
 	exitedAt time.Time
 
-	readCur  int64 // tool-side read cursor (shell_read without since_cursor continues here)
+	readCur  int64         // tool-side read cursor (shell_read without since_cursor continues here)
 	notifyCh chan struct{} // pinged on new output
 	done     chan struct{} // closed when the process exits
 }

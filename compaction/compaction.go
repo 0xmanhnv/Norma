@@ -1,5 +1,5 @@
 // Package compaction keeps a conversation within a model's context window using
-// three mechanisms aligned 1:1 with claude-code (see docs/COMPACTION-SPEC-3.md):
+// three mechanisms aligned 1:1 with claude-code:
 //
 //   - MicroCompact — clear stale COMPACTABLE tool-result bodies (non-destructive:
 //     the result can be re-read). Keeps the most recent N compactable results and

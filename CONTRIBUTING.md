@@ -78,6 +78,7 @@ transcript/    Append-only JSONL persistence + resume
 cmd/agentcore/ A runnable CLI demo (not imported by the library)
 examples/      Scenario wiring, end to end
 docs/          Architecture and subsystem guides
+docs_test.go   Checks the Markdown: links, anchors, cited paths, Mermaid
 ```
 
 Dependencies flow one way: `llm`, `permission` and `fold` import nothing else in the
@@ -89,7 +90,12 @@ See the package map in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#2-package-map
 
 - **Code is the source of truth.** Docs cite package/file paths and must match the
   code; when they drift, fix the doc (or the code) in the same spirit. Every package
-  opens with a doc comment that states its job — keep it accurate.
+  opens with a doc comment that states its job — keep it accurate. `docs_test.go`
+  fails on a broken relative link or anchor, a backticked repository path that does
+  not exist, a Go comment pointing at a missing `docs/` file, and Mermaid ids that are
+  keywords (`end`, or `loop` / `alt` / `note` … as a sequence participant) or
+  unquoted labels containing brackets. It cannot check prose, so symbols, defaults and
+  counts still need a human eye.
 - **The harness stays domain-neutral.** Corvid is an engine, not an application. It
   ships no preset system prompt and no scenario logic; those belong in `examples/` or
   in the host. Don't bake a use case into the core.

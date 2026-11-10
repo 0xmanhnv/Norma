@@ -1,7 +1,9 @@
 // Package skill implements the skill system: named, reusable instruction packages
 // the agent can invoke on demand. The format follows the agentskills.io open
 // standard — a SKILL.md with YAML frontmatter (name, description, and optional
-// license/compatibility fields) followed by Markdown instructions.
+// license/compatibility fields) followed by Markdown instructions. An optional
+// mcps list names MCP servers whose deferred tools the host unlocks when the
+// skill is invoked (Registry.OnInvoke).
 package skill
 
 import (

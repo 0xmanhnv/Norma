@@ -12,7 +12,7 @@ import (
 
 // The interactive-shell tool family (opt-in; NOT in DefaultTools). ShellSessionTools
 // returns all five. They require a task Manager on the ToolContext (tc.Tasks) — that is
-// where the PTY sessions live and get cleaned up. See docs/交互式shell设计.md.
+// where the PTY sessions live and get cleaned up.
 
 // ShellSessionTools returns the five interactive-shell tools. Callers add them to
 // Options.Tools only when interactive shell is enabled for the agent.

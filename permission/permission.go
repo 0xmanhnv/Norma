@@ -49,8 +49,8 @@ const (
 	ModeAcceptEdits Mode = "acceptEdits"       // auto-allow file edits/writes
 	ModeBypass      Mode = "bypassPermissions" // allow everything (except deny rules)
 	ModePlan        Mode = "plan"              // read-only only
-	ModeDontAsk     Mode = "dontAsk"           // never prompt; rules + read-only only
-	ModeAuto        Mode = "auto"              // like dontAsk but allows tool's own allow verdict
+	ModeDontAsk     Mode = "dontAsk"           // never prompt; deny what stage 3 does not allow
+	ModeAuto        Mode = "auto"              // never prompt; Evaluate treats it like dontAsk
 )
 
 // Context is passed to a tool's CheckPermissions and the interactive callback.
