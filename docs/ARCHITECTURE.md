@@ -412,7 +412,9 @@ out of band, and the loop drains their completion notifications into the convers
 between turns (`loop.injectTaskNotifications`) so the model learns when work finishes
 — including provoking an extra turn so it can react. The **TaskOutput / TaskStop /
 TaskList / Monitor** tools read and control them. On Linux every spawned task is also
-bounded by a per-task memory cap that kills the process group of a leaking command.
+bounded by a per-task memory cap (`AGENT_CORE_TASK_MEM_CAP`, default 80% of the
+cgroup or host memory budget) that kills the process group of a leaking command; see
+[jobs → Safety](guides/jobs.md#safety).
 Background tasks can be disabled globally
 (`AGENT_CORE_DISABLE_BACKGROUND_TASKS`) or per-session (`Options.DisableBackgroundTasks`).
 

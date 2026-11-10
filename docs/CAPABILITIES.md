@@ -44,7 +44,7 @@ active without any configuration; "opt-in" means you set the listed `Options` fi
 | Plan mode | `plan` | `Options.Plan` | [architecture](ARCHITECTURE.md#7-mcp-skills-memory-plan-mode) |
 | Long-term memory | `memory` | `Options.Memory` | [memory](guides/memory.md) |
 | Skills | `skill` | `Options.Skills` | [skills](guides/skills.md) |
-| Background jobs | `tool` (Manager) | on by default; `Options.DisableBackgroundTasks` to turn off | [jobs](guides/jobs.md) |
+| Background jobs | `tool` (Manager) | on by default; `Options.DisableBackgroundTasks` to turn off; per-task memory cap on Linux via `AGENT_CORE_TASK_MEM_CAP` (default 80% of the cgroup/host memory budget, `off` disables) | [jobs](guides/jobs.md) |
 | Deferred tools | `tool` | `Options.DeferredTools` (+ `UnlockSet`) | [tools](guides/tools.md#deferred-tools) |
 | Transcript persistence + resume | `transcript` | `Options.Transcript`; `Session.Resume(id)` | [architecture](ARCHITECTURE.md#10-transcript-and-resume) |
 | Web fetch | `tool` | `Options.EnableWebFetch` (+ proxy/CA options) | [tools](guides/tools.md#the-built-in-toolset) |
