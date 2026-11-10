@@ -16,10 +16,14 @@ bin/
 dist/
 *.out
 
-# Compiled example / CLI binaries (produced by a stray `go build ./path`)
+# Compiled example / CLI binaries (produced by a stray `go build ./path`).
+# agentcore and coordinator are also package directories: the ! lines keep
+# the directories tracked while still ignoring a binary of the same name.
 /minimal
 /agentcore
+!/agentcore/
 /coordinator
+!/coordinator/
 /custom-llm
 /coding-agent
 /security-audit
