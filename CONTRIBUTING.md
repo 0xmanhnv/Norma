@@ -34,8 +34,9 @@ Corvid is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/no
   everything is plain `go`.
 
 Dependencies are intentionally few (`go.mod`): a PTY library and a terminal emulator
-(for the shell tools' tests), `golang.org/x/net`, and `gopkg.in/yaml.v3`. Please keep
-the dependency footprint small.
+(for the interactive shell tools), `golang.org/x/net` (HTML parsing in WebFetch and
+web_search), and `gopkg.in/yaml.v3` (skill frontmatter), all used by `tool` or `skill`.
+`llm` is standard library only. Please keep the dependency footprint small.
 
 ## Build, test, and format
 
@@ -64,9 +65,9 @@ llm/           Message model, Provider interface, Anthropic/OpenAI/Responses ada
 tool/          CoreTool contract, Registry, built-in tools, typed output, background-task Manager
 permission/    The safety boundary: decisions, modes, the four-stage pipeline
 compaction/    Built-in non-destructive context-window management
-fold/           Opt-in model-driven compression core (pure library)
-foldadapter/    Wires fold into a Session
-hook/          Eight lifecycle callbacks
+fold/          Opt-in model-driven compression core (pure library)
+foldadapter/   Wires fold into a Session
+hook/          Lifecycle hooks (eight hook points)
 subagent/      Context-isolated child agents (the Agent tool)
 coordinator/   Multi-agent coordination over subagents
 mcp/           Model Context Protocol: stdio + in-process servers
@@ -79,8 +80,10 @@ examples/      Scenario wiring, end to end
 docs/          Architecture and subsystem guides
 ```
 
-Dependencies flow one way: `agentcore` composes everything; `llm` depends on nothing
-else in the tree. See the package map in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#2-package-map).
+Dependencies flow one way: `llm`, `permission` and `fold` import nothing else in the
+tree, `agentcore` composes the core packages, and the add-ons (`subagent`,
+`coordinator`, `mcp`, `hook`, `foldadapter`) are wired in through `agentcore.Options`.
+See the package map in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#2-package-map).
 
 ## Conventions
 
@@ -112,7 +115,8 @@ else in the tree. See the package map in [docs/ARCHITECTURE.md](docs/ARCHITECTUR
   to and from the vendor-neutral content-block model, and classify failures into the
   `llm.Code` taxonomy at the adapter boundary.
 - **A subsystem tool pack.** Follow the existing pattern: a package that exposes a
-  `Tools()`/`Tool()` constructor returning `CoreTool`s, wired in through `agentcore.Options`.
+  constructor returning `CoreTool`s (`memory.Tools`, `plan.Tools`, `skill.Registry.Tool`,
+  `subagent.NewTool`), wired in through `agentcore.Options`.
 
 ## Pull requests
 

@@ -27,7 +27,7 @@ from `Compactor.Pre` / `Reactive` (`compaction/compaction.go`):
 
 ```mermaid
 flowchart TD
-    Pre([Pre]) --> M{> 60% window?}
+    Pre([Pre]) --> M{"> 60% of effective<br/>window?"}
     M -->|no| Send[send as-is]
     M -->|yes| Micro["MicroCompact — clear old<br/>compactable tool results<br/>(keep most recent 5)"]
     Micro --> A{≥ threshold or<br/>predictively over?}
@@ -39,8 +39,9 @@ flowchart TD
 ```
 
 - **MicroCompact** clears the bodies of stale *compactable* tool results — file reads,
-  shell, grep/glob, web, edit/write — keeping the most recent five. A cleared result
-  can be re-read, so nothing is lost.
+  shell, grep/glob, web, edit/write — keeping the most recent five. It runs once the
+  context passes 60% of the effective window (the window minus the summary
+  reservation). A cleared result can be re-read, so nothing is lost.
 - **AutoCompact** summarizes the messages between the last boundary and the preserved
   recent tail, inserts a `compact_boundary` marker plus the summary, and retains
   everything before it. Only messages after the last boundary are sent to the model.
@@ -56,10 +57,15 @@ flowchart TD
 ```go
 compaction.Config{
     ContextWindow:   200000, // model window in tokens (default 200000)
-    MaxOutputTokens: 8000,   // bounds the summary reservation (min(..,20000))
-    KeepRecent:      8,      // un-summarized recent tail AutoCompact preserves
+    MaxOutputTokens: 8000,   // summary reservation is min(MaxOutputTokens, 20000) (default 8000)
+    KeepRecent:      8,      // recent messages AutoCompact never summarizes (default 8)
 }
 ```
+
+The summaries are written by the session's own `Provider` (`compaction.ProviderSummarizer`).
+AutoCompact fires at the effective window minus a buffer of 13k tokens (30k from a
+400k effective window, 50k from 800k), or earlier when the next turn could add more
+than the summary reservation plus 15k tokens and overflow.
 
 ### Skills survive boundaries
 
@@ -87,11 +93,19 @@ err := foldadapter.Enable(&opts, foldadapter.Options{
 })
 ```
 
-`Enable` attaches three things that must live or die together: a `Compactor`, the
-`Compress` tool, and the resident prompt sections that teach the model how to write
-good summaries. Enabling it disables the built-in compaction. Originals are preserved
-in the archive directory (the only route back to compressed content), and compression
-state can be inherited across forks and subagents via `ParentSessionIDs`.
+`Enable` attaches three things that must live or die together: a `Compactor`
+(`opts.Compactor`), the `Compress` tool (`opts.Tools`), and the resident prompt
+sections that teach the model how to write good summaries (`opts.AppendSystemPrompt`).
+`Config` overrides `fold.DefaultConfig`, which is otherwise sized from
+`ModelContextLimit` (default 200000), and `OnWarn` receives non-fatal diagnostics.
+
+Enabling it disables the built-in compaction. Originals are preserved in the archive
+directory (the only route back to compressed content), and compression state can be
+inherited across forks and subagents via `ParentSessionIDs`.
+
+`Enable` appends `Compress` to `opts.Tools`. If `opts.Tools` was nil, the session
+would then see only `Compress` instead of the default toolset, so set
+`opts.Tools = tool.DefaultTools()` (or your own list) before calling it.
 
 `fold` is a port of acp-kernel; [fold upstream sync](fold-upstream-sync.md) records the
 upstream baseline, every upstream change since, and what was ported, deferred or

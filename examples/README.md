@@ -5,15 +5,16 @@ They share no framework code — the point is to show how little it takes to ass
 agent from the library, and how the same loop drives very different behavior depending
 only on the prompt, the tools, and the policy you hand it.
 
-All examples read the model from the environment and need an API key for the provider
-they use (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). They compile as part of
-`go build ./...`.
+All examples read the model name from `AGENT_MODEL` and need an API key for the
+provider they use (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Most fall back to a
+default model; `coding-agent` has none, so give it `-model` or `AGENT_MODEL`. They
+compile as part of `go build ./...`.
 
 | Example | Demonstrates | Run |
 |---|---|---|
 | [`minimal`](minimal/) | The smallest useful agent: provider + host prompt + default toolset + the streaming loop. | `go run ./examples/minimal` |
 | [`custom-llm`](custom-llm/) | Pointing the SDK at any model (OpenAI/Anthropic/DeepSeek), a custom non-coding system prompt, and a custom tool. | `go run ./examples/custom-llm` |
-| [`coding-agent`](coding-agent/) | A full coding agent: interactive permission prompts, a `PreToolUse` hook, and compaction. | `go run ./examples/coding-agent` |
+| [`coding-agent`](coding-agent/) | A full coding agent: interactive permission prompts, a `PreToolUse` hook, TodoWrite planning, and compaction. | `go run ./examples/coding-agent -model gpt-4o` |
 | [`security-audit`](security-audit/) | A read-only auditor that delegates deeper work to a subagent (context isolation). | `go run ./examples/security-audit` |
 | [`planner-memory`](planner-memory/) | Plan mode (explore → approve → implement) plus persistent long-term memory. | `go run ./examples/planner-memory` |
 | [`coordinator`](coordinator/) | A coordinator that decomposes work and fans it out to isolated worker subagents. | `go run ./examples/coordinator` |

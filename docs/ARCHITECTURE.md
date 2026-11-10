@@ -17,7 +17,7 @@ boundary that matters.
 - [4. Tools and the permission pipeline](#4-tools-and-the-permission-pipeline)
 - [5. Context and compaction](#5-context-and-compaction)
 - [6. Subagents and coordination](#6-subagents-and-coordination)
-- [7. MCP, skills, memory, plan mode](#7-mcp-skills-memory-plan-mode)
+- [7. MCP, skills, memory, plan mode, hooks](#7-mcp-skills-memory-plan-mode-hooks)
 - [8. Background jobs](#8-background-jobs)
 - [9. Streaming and the event model](#9-streaming-and-the-event-model)
 - [10. Transcript and resume](#10-transcript-and-resume)
@@ -80,65 +80,68 @@ Three principles are wired into the structure and worth stating up front:
 
 ## 2. Package map
 
-Each top-level directory is one Go package with one job. Dependencies flow
-downward — `agentcore` depends on everything, `llm` depends on nothing in the tree.
+Each top-level directory is one Go package with one job. Dependencies flow one
+way: `llm`, `permission` and `fold` import nothing else in the tree; `agentcore`
+composes the core packages; the add-ons (`subagent`, `coordinator`, `mcp`, `hook`,
+`foldadapter`) sit outside it and are wired in through `agentcore.Options`.
+
+The graph shows the direct imports between packages. Edges into the two leaves
+that most packages import, `llm` and `permission`, are left out to keep it
+readable; the table lists them.
 
 ```mermaid
 flowchart TD
+    foldadapter --> agentcore
+    foldadapter --> compaction
+    foldadapter --> fold
+    foldadapter --> tool
+
     agentcore --> harness
     agentcore --> compaction
-    agentcore --> memory
     agentcore --> plan
+    agentcore --> memory
     agentcore --> skill
     agentcore --> transcript
     agentcore --> tool
-    agentcore --> permission
-    agentcore --> llm
 
-    harness --> tool
-    harness --> permission
-    harness --> llm
-
-    tool --> permission
-    tool --> llm
-
+    coordinator --> subagent
+    coordinator --> harness
+    coordinator --> tool
     subagent --> harness
     subagent --> transcript
-    coordinator --> subagent
+    subagent --> tool
+
+    harness --> tool
     mcp --> tool
-    skill --> tool
     plan --> tool
-    memory -.tools.-> tool
-    hook --> llm
+    memory --> tool
+    skill --> tool
 
-    foldadapter --> fold
-    foldadapter --> agentcore
-    foldadapter --> tool
-    fold --> llm
-
-    permission --> llm
-    compaction --> llm
-    transcript --> llm
+    hook
+    subgraph Leaves["imported by most packages"]
+        llm
+        permission
+    end
 ```
 
 | Package | Owns | Depends on |
 |---|---|---|
-| `llm` | Vendor-neutral message model (`Message`, `ContentBlock`, `StreamEvent`, `Usage`), the `Provider` interface, the Anthropic / OpenAI / OpenAI-Responses adapters, and the stable error taxonomy (`llm.Error`, `llm.Code`). | stdlib + `golang.org/x/net` |
-| `tool` | The `CoreTool` contract, the fail-closed `Build` factory, the `Registry`, input validation/coercion, and the built-in tools. | `llm`, `permission` |
-| `permission` | The safety boundary: decisions, modes, rule matching, and the four-stage `Evaluate` pipeline. | `llm` |
+| `llm` | Vendor-neutral message model (`Message`, `ContentBlock`, `StreamEvent`, `Usage`), the `Provider` interface, the Anthropic / OpenAI / OpenAI-Responses adapters, and the stable error taxonomy (`llm.Error`, `llm.Code`). | stdlib only |
+| `tool` | The `CoreTool` contract, the fail-closed `Build` factory, the `Registry`, input validation/coercion, typed output, spill stores, the background-task `Manager`, and the built-in tools. | `llm`, `permission` (+ `golang.org/x/net`, a PTY library and a terminal emulator) |
+| `permission` | The safety boundary: decisions, modes, rule matching, and the four-stage `Evaluate` pipeline. | stdlib only |
 | `harness` | The loop: streaming a turn, scheduling and executing tools, recovery, Stop/budget gates, cancellation. | `llm`, `tool`, `permission` |
 | `compaction` | Built-in context-window management (MicroCompact, AutoCompact, Reactive) with a circuit breaker. | `llm` |
 | `hook` | Eight lifecycle callbacks; a `Registry` that satisfies `harness.HookRunner`. | `llm` |
-| `subagent` | Delegation to isolated child agents via an `Agent` tool, with a depth guard. | `harness`, `tool`, `transcript` |
-| `coordinator` | A top-level agent that fans work out to `worker` subagents (LLM-driven or programmatic). | `subagent`, `harness` |
-| `mcp` | Model Context Protocol: a stdio JSON-RPC client and in-process servers, each tool adapted as `mcp__<server>__<tool>`. | `tool` |
+| `subagent` | Delegation to isolated child agents via an `Agent` tool, with a depth guard. | `harness`, `llm`, `permission`, `tool`, `transcript` |
+| `coordinator` | A top-level agent that fans work out to `worker` subagents (LLM-driven or programmatic). | `subagent`, `harness`, `llm`, `permission`, `tool` |
+| `mcp` | Model Context Protocol: a stdio JSON-RPC client and in-process servers, each tool adapted as `mcp__<server>__<tool>`. | `llm`, `permission`, `tool` |
 | `plan` | Plan mode: read-only exploration, then approval flips the permission mode mid-loop. | `permission`, `tool` |
-| `memory` | File-backed long-term memory with a `MEMORY.md` index and recall/record tools. | stdlib |
-| `skill` | Named instruction packages loaded from `SKILL.md`; a `Skill` tool injects one on demand. | `tool`, `llm` |
+| `memory` | File-backed long-term memory with a `MEMORY.md` index and recall/record tools. | `permission`, `tool` |
+| `skill` | Named instruction packages loaded from `SKILL.md`; a `Skill` tool injects one on demand. | `llm`, `permission`, `tool` (+ `gopkg.in/yaml.v3`) |
 | `transcript` | Append-only JSONL persistence and reconstruction for resume. | `llm` |
-| `fold` | An opt-in, model-driven context-compression engine: a pure core that decides *when* and *what* to compress while the model writes the summaries. | `llm` |
-| `foldadapter` | Wires `fold` into a `Session` (a `Compactor` + a `Compress` tool + resident prompt). | `fold`, `agentcore`, `tool` |
-| `agentcore` | The public `Session` / `Options` / `Run` entry point that aggregates all of the above. | everything above |
+| `fold` | An opt-in, model-driven context-compression engine: a pure core that decides *when* and *what* to compress while the model writes the summaries. | stdlib only |
+| `foldadapter` | Wires `fold` into a `Session` (a `Compactor` + a `Compress` tool + resident prompt). | `fold`, `agentcore`, `compaction`, `llm`, `permission`, `tool` |
+| `agentcore` | The public `Session` / `Options` / `Run` entry point. It builds the tool registry, permission settings, context manager, plan mode, memory, skills and transcript for a session and runs the loop. | `harness`, `compaction`, `plan`, `memory`, `skill`, `transcript`, `tool`, `permission`, `llm` |
 
 `cmd/agentcore` is a runnable CLI demo; `examples/` holds scenario wiring. Neither is
 imported by the library.
@@ -231,8 +234,10 @@ flowchart TD
     Eval -->|allow| PreHook["PreToolUse hook"]
     PreHook -->|block| Blocked[error: blocked by hook]
     PreHook -->|ok / rewrite| Run["tool.Call"]
-    Run --> Cap["cap / spill oversized output"]
-    Cap --> Result([tool_result block])
+    Run --> Rewrite["RewriteToolResult<br/>(if the host set one)"]
+    Rewrite --> Cap["cap / spill oversized output"]
+    Cap --> Post["OnToolResult · PostToolUse hook"]
+    Post --> Result([tool_result block])
 ```
 
 Two details make this robust: input is **coerced** before validation (common
@@ -268,20 +273,24 @@ flowchart TD
 
 The six modes (`permission.Mode`): `default` (ask for anything not read-only unless
 a rule allows), `acceptEdits` (auto-allow Write/Edit/NotebookEdit), `bypassPermissions`
-(allow all except deny rules), `plan` (read-only only), `dontAsk` (never prompt —
-rules + read-only only), and `auto` (like `dontAsk` but honors a tool's own allow
-verdict).
+(allow all except deny rules), `plan` (read-only only), and `dontAsk` and `auto`
+(never prompt: whatever stage 3 does not allow is denied). In `Evaluate` the last
+two behave the same; they differ only in their denial message and in how strict
+`harness.StricterMode` ranks them when a subagent's mode is reconciled with its
+parent's (`auto` counts as less strict).
 
 ### The built-in toolset
 
 `tool.DefaultTools()` returns **Read, Write, Edit, MultiEdit, LS, Glob, Grep, Bash**,
-plus **Sleep** (a context-cancellable wait that pairs with background execution).
-Everything else is opt-in through its own constructor or `Options` flag: network
-tools (**WebFetch**, **WebSearch**), stateful planning (**TodoWrite**), structured
-questions (**AskUserQuestion**), the background-task tools (**TaskOutput, TaskStop,
-TaskList, Monitor**), and **deferred tools** — whose schemas are withheld from the
-model to save context and discovered on demand via `SearchExtraTools` /
-`ExecuteExtraTool`.
+plus **sleep** (a context-cancellable wait that pairs with background execution).
+A `Session` also adds the background-task tools (**TaskOutput, TaskStop, TaskList,
+Monitor**) unless background tasks are disabled. Everything else is opt-in through
+its own constructor or `Options` field: network tools (**WebFetch**, **web_search**),
+stateful planning (**TodoWrite**), structured questions (**AskUserQuestion**), the
+interactive PTY shell tools (`tool.ShellSessionTools`: shell_open, shell_send,
+shell_read, shell_list, shell_close), and **deferred tools**, whose schemas are
+withheld from the model to save context and discovered on demand via
+`SearchExtraTools` / `ExecuteExtraTool`.
 
 ---
 
@@ -297,7 +306,7 @@ Three mechanisms run from `Compactor.Pre` (and `Reactive`) in `compaction/compac
 
 ```mermaid
 flowchart TD
-    Pre([Compactor.Pre]) --> Micro{tokens > 60% window?}
+    Pre([Compactor.Pre]) --> Micro{"tokens > 60% of<br/>effective window?"}
     Micro -->|no| Keep[send as-is]
     Micro -->|yes| MC["MicroCompact:<br/>clear old compactable tool results<br/>(keep most recent 5)"]
     MC --> Auto{tokens ≥ threshold<br/>or predictively over?}
@@ -310,8 +319,9 @@ flowchart TD
 ```
 
 - **MicroCompact** clears the bodies of stale *compactable* tool results
-  (file reads, shell, grep/glob, web, edit/write), keeping the most recent five. It
-  is non-destructive: a cleared result can be re-read.
+  (file reads, shell, grep/glob, web, edit/write), keeping the most recent five, once
+  the context passes 60% of the effective window (the window minus the summary
+  reservation). It is non-destructive: a cleared result can be re-read.
 - **AutoCompact** summarizes the working head behind a `compact_boundary` marker at
   the token threshold, or predictively when the next turn would overflow. The full
   history stays in the array; only messages after the last boundary are sent
@@ -357,7 +367,9 @@ See the [compaction guide](guides/compaction.md) for the full walkthrough.
 A **subagent** (`subagent/subagent.go`) is the same harness loop run with its own
 prompt, tool subset, and permission mode — giving context isolation. It is exposed
 to the parent as an `Agent` tool; recursion is bounded by a depth guard carried on
-the context (`MaxDepth`, default 3).
+the context (`MaxDepth`, default 3). A child inherits its parent's deny and allow
+rules, and runs in the stricter of its own and its parent's permission mode
+(`harness.StricterMode`), so delegation never loosens the policy.
 
 **Coordinator mode** (`coordinator/coordinator.go`) is a pattern on top of subagents:
 a top-level agent that decomposes work and delegates each unit to isolated `worker`
@@ -383,7 +395,7 @@ spawns workers itself; the programmatic `RunParallel` fans tasks out concurrentl
 
 ---
 
-## 7. MCP, skills, memory, plan mode
+## 7. MCP, skills, memory, plan mode, hooks
 
 - **MCP** (`mcp/mcp.go`) speaks JSON-RPC 2.0 over newline-delimited stdio to external
   servers and also supports in-process servers (plain Go functions). Every MCP tool
@@ -393,15 +405,26 @@ spawns workers itself; the programmatic `RunParallel` fans tasks out concurrentl
   YAML frontmatter (`name`, `description`, optional `license` / `compatibility` /
   `mcps`) plus a Markdown body. Invoking one injects its procedure as an independent
   message that becomes standing guidance (and is re-injected across compaction
-  boundaries). A skill may declare MCP servers to unlock when it loads.
+  boundaries). A skill may declare MCP servers in `mcps`; the host's
+  `skill.Registry.OnInvoke` callback unlocks their deferred tools when it loads.
 - **Memory** (`memory/memory.go`) stores facts as Markdown-with-frontmatter files
   indexed by `MEMORY.md`. The agent recalls relevant memories and records new ones
-  via tools; relevant memories can be auto-injected into each prompt.
-- **Plan mode** (`plan/plan.go`) starts the agent read-only (mode `plan`). It explores,
-  drafts a plan, and calls `ExitPlanMode` to present it. On approval a `Controller`
-  flips the live permission mode to the target (default `acceptEdits`); the harness
-  reads the mode through `QueryInput.PermissionModeFunc` so the change takes effect
-  mid-loop.
+  via tools; with `AutoInject`, the most relevant memories are appended to each
+  prompt.
+- **Plan mode** (`plan/plan.go`) runs the agent read-only (mode `plan`), either from
+  the start (`PlanOptions.StartInPlanMode`) or once the model calls `EnterPlanMode`.
+  It explores, drafts a plan, and calls `ExitPlanMode` to present it. On approval a
+  `Controller` flips the live permission mode to the target (default `acceptEdits`);
+  the harness reads the mode through `QueryInput.PermissionModeFunc` so the change
+  takes effect mid-loop.
+- **Hooks** (`hook/hook.go`) are Go callbacks at eight points: `PreToolUse` (may block
+  the call or rewrite its input), `PostToolUse` / `PostToolUseFailure`, `Stop` (may end
+  the run or force another turn), `UserPromptSubmit` (may add context to the prompt),
+  `SessionStart`, `SessionEnd` and `SubagentStart`. A `hook.Registry` goes in
+  `Options.Hooks`. The loop fires the tool and Stop hooks, `Session.Prompt` fires
+  `SessionStart` (on the first prompt) and `UserPromptSubmit`, and the `Agent` tool
+  fires `SubagentStart` when its `subagent.Config.Hooks` is a registry. Nothing fires
+  `SessionEnd` for you: call `Registry.FireSessionEnd` when the host is done.
 
 ---
 
@@ -410,8 +433,9 @@ spawns workers itself; the programmatic `RunParallel` fans tasks out concurrentl
 When background tasks are enabled, a per-session `tool.Manager` runs long commands
 out of band, and the loop drains their completion notifications into the conversation
 between turns (`loop.injectTaskNotifications`) so the model learns when work finishes
-— including provoking an extra turn so it can react. The **TaskOutput / TaskStop /
-TaskList / Monitor** tools read and control them. On Linux every spawned task is also
+— including provoking an extra turn so it can react. **Bash** with
+`run_in_background` and **Monitor** start tasks; **TaskOutput**, **TaskList** and
+**TaskStop** read and control them. On Linux every spawned task is also
 bounded by a per-task memory cap (`AGENT_CORE_TASK_MEM_CAP`, default 80% of the
 cgroup or host memory budget) that kills the process group of a leaking command; see
 [jobs → Safety](guides/jobs.md#safety).
@@ -423,7 +447,8 @@ Background tasks can be disabled globally
 ## 9. Streaming and the event model
 
 `harness.Query` yields `harness.Event` values (`harness/event.go`). A host ranges over
-the iterator and reacts to each kind; the final event is always `KindResult`.
+the iterator and reacts to each kind; the final event is always `KindResult`, unless
+the host stops ranging early (`QueryInput.OnExit` still sees how the run ended).
 
 ```mermaid
 sequenceDiagram
@@ -461,13 +486,18 @@ response arrives.
 ## 10. Transcript and resume
 
 With a `transcript.Store` configured, the loop persists the conversation as an
-append-only JSONL log through a `Recorder` (`harness/query.go`). It records genuine
-message births in order and compaction boundaries (for observability), but never the
-ephemeral working-set edits MicroCompact makes — so the recorded transcript is the
-raw, full-fidelity history. `Session.Resume(id)` reloads it, rebuilds the message
-history and cumulative usage, and drops any trailing tool call whose result never
-landed (a crash mid-tool) so the provider never sees a dangling `tool_use`. Subagents
-write their own sidechain files under the same store.
+append-only JSONL log through a `Recorder` (`harness/query.go`). It records every
+message as it is born, in order, so the log holds the full-fidelity history. When
+compaction inserts a boundary, the boundary marker, the summary and a second copy of
+the kept recent tail are recorded, plus a separate boundary record for observability;
+MicroCompact's tool-result clearing is never recorded. `Session.Resume(id)` reloads
+the log, rebuilds the message history and cumulative usage, and drops any trailing
+tool call whose result never landed (a crash mid-tool) so the provider never sees a
+dangling `tool_use`. Because the post-boundary working set is in the log, a resumed
+session continues from the compacted view instead of summarizing again. A rewind
+record (`transcript.Store.Rewind`) moves the conversation back to an earlier message
+without deleting anything from the file. Subagents write their own sidechain files
+under the same store.
 
 ---
 

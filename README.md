@@ -15,7 +15,7 @@ A general-purpose **Agent Harness SDK in Go**. Corvid is the engine that turns a
 
 You point it at any model (via the **Anthropic** or **OpenAI** wire format — including the OpenAI *Responses* API), drive it with a **host-controlled system prompt**, and extend it with your own tools, permission policy, hooks, and subagents. It ships as a focused, near-dependency-free library — the loop, scheduler, and safety boundary are provider- and scenario-agnostic: they don't know whether they're driving a coding agent, a security auditor, or a customer-support bot.
 
-**What you get out of the box:** dual-format streaming, a fail-closed tool system with the standard file/shell toolset, a four-stage permission pipeline, automatic context-window management, lifecycle hooks, subagents, MCP, plan mode, long-term memory, a skill system, background tasks, and multi-agent coordination — all behind one stateful `Session`.
+**What you get out of the box:** streaming over the Anthropic and OpenAI wire formats, a fail-closed tool system with the standard file/shell toolset, a four-stage permission pipeline, automatic context-window management, lifecycle hooks, subagents, MCP, plan mode, long-term memory, a skill system, background tasks, and multi-agent coordination — all behind one stateful `Session`.
 
 Module path: `github.com/0xmanhnv/corvid` · Go 1.26+ (per [`go.mod`](go.mod); the loop streams through `iter`, added in Go 1.23).
 
@@ -43,19 +43,19 @@ flowchart LR
 
 | Package | Responsibility |
 |---|---|
-| `llm` | Vendor-neutral message model (`Message`/`ContentBlock`/`StreamEvent`) + `Provider` interface. `NewProvider(Config{Format})` builds an **Anthropic** or **OpenAI** adapter; both stream and support tool calls, normalized to one event type. |
-| `tool` | `CoreTool` contract, fail-closed `Build` factory, `Registry`, a lightweight JSON-Schema validator, and the core tools: **Read, Write, Edit, MultiEdit, LS, Glob, Grep, Bash, Sleep** (default set) plus opt-in **WebFetch** / **WebSearch** (network, permission-gated), **TodoWrite** (stateful planning), **AskUserQuestion** (structured mid-task questions), background-task tools (**TaskOutput/TaskStop/TaskList/Monitor**), and **deferred tools** — schemas withheld from the model to save context, discovered on demand via `SearchExtraTools` and invoked through `ExecuteExtraTool`. |
-| `permission` | The safety boundary: `allow`/`deny`/`ask` decisions, six `PermissionMode`s, allow/deny rules with deny-priority, and the four-stage `Evaluate` pipeline. |
-| `harness` | The loop: `Query` streams `Event`s (`iter.Seq2`), schedules tools (parallel for read-only, serial for mutating), pairs every `tool_use` with a `tool_result` (synthetic on deny/abort), enforces termination reasons, and threads cancellation. `QueryDeps` injects side effects for testing. |
+| `llm` | Vendor-neutral message model (`Message`/`ContentBlock`/`StreamEvent`) + `Provider` interface. `NewProvider(Config{Format})` builds an **Anthropic** (`FormatAnthropic`), **OpenAI Chat Completions** (`FormatOpenAI`) or **OpenAI Responses** (`FormatOpenAIResponses`) adapter; all three stream and support tool calls, normalized to one event type. Failures carry a stable `llm.Code`. |
+| `tool` | `CoreTool` contract, fail-closed `Build` factory, `Registry`, a lightweight JSON-Schema validator, and the core tools: **Read, Write, Edit, MultiEdit, LS, Glob, Grep, Bash, sleep** (default set); opt-in **WebFetch** / **web_search** (network, permission-gated), **TodoWrite** (stateful planning), **AskUserQuestion** (structured mid-task questions) and the interactive PTY shell tools (`ShellSessionTools`); the background-task tools (**TaskOutput/TaskStop/TaskList/Monitor**, added unless background tasks are disabled); and **deferred tools** — schemas withheld from the model to save context, discovered on demand via `SearchExtraTools` and invoked through `ExecuteExtraTool`. |
+| `permission` | The safety boundary: `allow`/`deny`/`ask` decisions, six `permission.Mode`s, allow/deny rules with deny-priority, and the four-stage `Evaluate` pipeline. |
+| `harness` | The loop: `Query` streams `Event`s (`iter.Seq2`), schedules tools (concurrency-safe ones in parallel, anything else exclusively), pairs every `tool_use` with a `tool_result` (synthetic on deny/abort), enforces termination reasons, and threads cancellation. `QueryDeps` injects side effects for testing. |
 | `compaction` | Non-destructive context-window management: **MicroCompact** (clear stale tool results), **AutoCompact** (summarize behind a `compact_boundary`), and **Reactive** recovery from prompt-too-long, plus a circuit breaker. Invoked skills are re-injected verbatim after each boundary so their instructions survive summarization. An opt-in **model-driven** engine (`fold`/`foldadapter`), where the model writes the summaries, is available as a mutually-exclusive alternative. |
-| `hook` | Eight lifecycle hooks (PreToolUse, PostToolUse, Stop, …) as Go callbacks that can block, rewrite input, inject context, or gate the Stop transition. |
+| `hook` | Eight lifecycle hook points (PreToolUse, PostToolUse, Stop, …) as Go callbacks that can block, rewrite input, inject context, or gate the Stop transition. A `hook.Registry` plugs into `Options.Hooks`. |
 | `subagent` | An `Agent` tool that delegates to isolated child agents reusing the same loop, with a recursion-depth guard. |
 | `mcp` | Model Context Protocol integration: a stdio JSON-RPC client and in-process servers, exposing tools as `mcp__<server>__<tool>`. |
 | `plan` | Plan mode: read-only exploration → `ExitPlanMode` presents a plan for approval → the permission mode flips mid-loop so the agent can implement. |
 | `memory` | Persistent long-term memory: markdown-with-frontmatter files + a `MEMORY.md` index, relevance selection, staleness warnings, and `RecallMemory`/`RecordMemory` tools. |
 | `skill` | Named, reusable instruction packages loaded from `SKILL.md` files (YAML frontmatter — `name`/`description`/`license`/`compatibility`/`mcps` — plus a Markdown body). A `Skill` tool injects a chosen skill's procedure on demand as standing guidance that survives compaction, and can unlock a skill's declared MCP tools on invocation. |
 | `coordinator` | Coordinator mode: a top-level agent that decomposes work and delegates to isolated `worker` subagents — LLM-driven (Agent tool + system segment) or programmatic (`RunParallel` fan-out). |
-| `agentcore` | The public entry point: a stateful `Session` whose `Prompt` streams the loop, plus a one-shot `Run`. Aggregates everything above, and optionally persists an append-only JSONL transcript so a session can be resumed (`Session.Resume`). |
+| `agentcore` | The public entry point: a stateful `Session` whose `Prompt` streams the loop, plus a one-shot `Run`. Wires the provider, tools, permissions, compaction, plan mode, memory, skills and hooks into one session, and optionally persists an append-only JSONL transcript so a session can be resumed (`Session.Resume`). Subagents, the coordinator, MCP and `fold` plug in through its `Options`. |
 
 ## Quick start
 
@@ -69,6 +69,7 @@ sess := agentcore.NewSession(agentcore.Options{
     PermissionMode: permission.ModeDefault,
     CanUseTool:     myApprovalCallback, // gates mutating tools
 })
+defer sess.Close() // stops any background tasks the agent started
 
 for ev, err := range sess.Prompt(ctx, "Add a /health endpoint and run the tests.") {
     if err != nil { /* ... */ }
@@ -90,16 +91,18 @@ Mutating tools (Write/Edit/Bash) prompt for approval unless `-yes` is set. Suppl
 
 ## Design highlights
 
-- **Dual wire formats, one model.** Both adapters translate to/from a single Anthropic-style content-block model, so the loop and tools never change when you switch providers. Reasoning models' `reasoning_content` surfaces as thinking events.
+- **Several wire formats, one model.** Every adapter translates to/from a single Anthropic-style content-block model, so the loop and tools never change when you switch providers. Reasoning models' `reasoning_content` surfaces as thinking events.
 - **Host owns the prompt.** The SDK ships no preset system prompt — `Options.SystemPrompt` is yours. Coding / security-audit prompts live in `examples/`, not the core.
-- **Fail-closed tools.** New tools default to not-read-only, not-concurrency-safe, approval-required. Read-only tools opt in and become eligible for parallel execution.
+- **Fail-closed tools.** New tools default to not-read-only, not-concurrency-safe, approval-required. A tool opts in separately to being read-only (allowed without asking) and concurrency-safe (eligible for parallel execution).
 - **Stable error codes.** Failures carry an `llm.Code` next to their message (`llm.Error`, `llm.CodeOf`, `llm.IsCode`). The provider adapters classify context-window, rate-limit, auth and availability failures at their boundary; a failed tool call's code rides on its `tool_result` block (`ContentBlock.ToolError`) into events and the transcript, never to the model.
 - **Typed tool output, optional.** A tool may declare its output (`tool.DeclareOutput`: a value type, its schema, a pure `Render` to model-facing content, an optional presentation-metadata projector) and return the value in `Result.Data`. The value is validated, frozen and rendered; only the rendered content enters the conversation and the transcript, while the value reaches the host through `OnToolResult`. `RewriteToolResult` is the post-execute policy point: `tool.ReplaceContent` changes what the model reads (presentation only, not a confidentiality mechanism), `tool.ReplaceValue` changes the value and renders again. Tools that build `Content` themselves keep working unchanged; `Read` and `Bash` are the reference migrations (`tool.FileLines`, `tool.CommandOutput`). MCP tools keep a server's `structuredContent` as the value.
-- **Pluggable spill store.** Oversized output goes to a `tool.SpillStore` (`QueryInput.SpillStore` / `Options.SpillStore`), which returns an opaque locator and the guidance the model reads; the default, `tool.LocalSpill`, keeps files in `ToolOutputDir` as before.
+- **Pluggable spill store.** Oversized output goes to a `tool.SpillStore` (`QueryInput.SpillStore` / `Options.SpillStore`), which returns an opaque locator and the guidance the model reads; the default, `tool.LocalSpill`, keeps files in `ToolOutputDir`.
+- **Bounded background work.** Bash commands (foreground and background) run through a per-session task manager with a 50 MiB output cap and, on Linux, a per-task memory cap (`AGENT_CORE_TASK_MEM_CAP`) that kills a leaking command's process group.
 - **`iter.Seq2` streaming.** `Prompt` and `Query` are range-over-func iterators; cancellation is via `context.Context`.
 
 ## Examples
 
+- `examples/minimal` — the smallest useful agent: a provider, a host prompt, the default toolset and the streaming loop.
 - `examples/custom-llm` — three provider configs + a custom non-coding prompt + a custom tool.
 - `examples/coding-agent` — full coding agent with interactive permissions, a PreToolUse hook, and compaction.
 - `examples/security-audit` — read-only auditor that delegates to a subagent.
@@ -112,15 +115,16 @@ Mutating tools (Write/Edit/Bash) prompt for approval unless `-yes` is set. Suppl
 go test ./...
 ```
 
-Coverage: both provider adapters over `httptest` SSE; the loop end-to-end with a scripted provider (tool execution, message threading, permission denial, max-turns, parallel reads); real tool execution in a temp dir; the permission pipeline matrix; compaction (auto-summary, circuit breaker, micro-compact); hooks (block/rewrite/Stop-gating); subagent dispatch + depth guard; and the MCP client over in-memory pipes.
+The suite runs offline. It covers the provider adapters over `httptest` SSE; the loop end-to-end with a scripted provider (tool execution, message threading, permission denial, max-turns, parallel reads); real tool execution in a temp dir; the permission pipeline matrix; compaction (auto-summary, circuit breaker, micro-compact); hooks (block/rewrite/Stop-gating); subagent dispatch + depth guard; and the MCP client over in-memory pipes.
 
 ## Scope
 
-Implements the core loop, dual providers, tools, the full permission pipeline, compaction, hooks, subagents, and MCP — plus plan mode, long-term memory, the skill system, background tasks, deferred tools, transcript persistence with resume, and coordinator multi-agent orchestration.
+Implements the core loop, the provider adapters, tools, the full permission pipeline, compaction, hooks, subagents, and MCP — plus plan mode, long-term memory, the skill system, background tasks, deferred tools, transcript persistence with resume, and coordinator multi-agent orchestration.
 
 ## Documentation
 
-- **[Architecture](docs/ARCHITECTURE.md)** — the whole system with verified Mermaid diagrams and a package map.
+- **[Architecture](docs/ARCHITECTURE.md)** — the whole system with Mermaid diagrams and a package map.
+- **[Capability matrix](docs/CAPABILITIES.md)** — what Corvid can do, which package owns it, and how to turn it on.
 - **[Documentation index](docs/README.md)** — reading paths for using Corvid vs contributing to it.
 - **Subsystem guides** — one page each: [agent loop](docs/guides/agent-loop.md) · [tools](docs/guides/tools.md) · [permissions](docs/guides/permissions.md) · [compaction](docs/guides/compaction.md) · [subagents](docs/guides/subagents.md) · [MCP](docs/guides/mcp.md) · [skills](docs/guides/skills.md) · [memory](docs/guides/memory.md) · [jobs](docs/guides/jobs.md).
 - **[Contributing](CONTRIBUTING.md)** — build, test, layout, and conventions.
