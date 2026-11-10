@@ -45,7 +45,7 @@ func TestFileTools(t *testing.T) {
 }
 
 func TestSearchTools(t *testing.T) {
-	t.Setenv("NORMA_DISABLE_RIPGREP", "1")
+	t.Setenv("CORVID_DISABLE_RIPGREP", "1")
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "one.go"), []byte("package main\nfunc Foo(){}\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "two.txt"), []byte("Foo lives\n"), 0o644)
@@ -60,7 +60,7 @@ func TestSearchTools(t *testing.T) {
 }
 
 func TestGrepContextLines(t *testing.T) {
-	t.Setenv("NORMA_DISABLE_RIPGREP", "1")
+	t.Setenv("CORVID_DISABLE_RIPGREP", "1")
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("a\nb\nMATCH\nd\ne\n"), 0o644)
 	// -C 1 should include the line before and after the match, with the match
@@ -78,7 +78,7 @@ func TestGrepContextLines(t *testing.T) {
 }
 
 func TestGrepTypeFilter(t *testing.T) {
-	t.Setenv("NORMA_DISABLE_RIPGREP", "1")
+	t.Setenv("CORVID_DISABLE_RIPGREP", "1")
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.go"), []byte("needle here\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "b.py"), []byte("needle here\n"), 0o644)
@@ -97,7 +97,7 @@ func TestGrepTypeFilter(t *testing.T) {
 }
 
 func TestGrepMultiline(t *testing.T) {
-	t.Setenv("NORMA_DISABLE_RIPGREP", "1")
+	t.Setenv("CORVID_DISABLE_RIPGREP", "1")
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("start\nalpha\nbeta\nend\n"), 0o644)
 
@@ -114,7 +114,7 @@ func TestGrepMultiline(t *testing.T) {
 }
 
 func TestGrepHeadLimitAndOffset(t *testing.T) {
-	t.Setenv("NORMA_DISABLE_RIPGREP", "1")
+	t.Setenv("CORVID_DISABLE_RIPGREP", "1")
 	dir := t.TempDir()
 	for _, n := range []string{"a", "b", "c", "d", "e"} {
 		os.WriteFile(filepath.Join(dir, n+".txt"), []byte("hit\n"), 0o644)

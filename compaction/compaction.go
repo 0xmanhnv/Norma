@@ -60,7 +60,19 @@ func (c *Config) defaults() {
 // deliberately excludes LS/MultiEdit/NotebookEdit.
 var compactableTools = map[string]bool{
 	"Read": true, "Bash": true, "Grep": true, "Glob": true,
-	"WebFetch": true, "WebSearch": true, "Edit": true, "Write": true,
+	"WebFetch": true, "web_search": true, "Edit": true, "Write": true,
+}
+
+// CompactableTools lists the tool names whose results MicroCompact may clear.
+// Every name must be a real tool name (the agentcore tests check this against
+// the default toolset), or that tool's old results are never cleared.
+func CompactableTools() []string {
+	out := make([]string, 0, len(compactableTools))
+	for n := range compactableTools {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 const (
