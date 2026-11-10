@@ -14,7 +14,7 @@ Norma is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/nor
 - Keep the upstream copyright and `LICENSE` intact. Norma is Apache-2.0; contributions
   are accepted under the same license.
 - Preserve third-party notices. Some paths are derived from other projects under their
-  own license (e.g. `noa` / `noaadapter`, ported from acp-kernel under the MIT License).
+  own license (e.g. `fold` / `foldadapter`, ported from acp-kernel under the MIT License).
   Keep their in-source attribution comments intact, and if you add or extend such code,
   record it in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
 - When porting from acp-kernel, keep its notices: the in-source "Ported from
@@ -61,8 +61,8 @@ llm/           Message model, Provider interface, Anthropic/OpenAI/Responses ada
 tool/          CoreTool contract, Registry, built-in tools, typed output, background-task Manager
 permission/    The safety boundary: decisions, modes, the four-stage pipeline
 compaction/    Built-in non-destructive context-window management
-noa/           Opt-in model-driven compression core (pure library)
-noaadapter/    Wires noa into a Session
+fold/           Opt-in model-driven compression core (pure library)
+foldadapter/    Wires fold into a Session
 hook/          Eight lifecycle callbacks
 subagent/      Context-isolated child agents (the Agent tool)
 coordinator/   Multi-agent coordination over subagents

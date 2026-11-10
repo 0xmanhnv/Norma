@@ -1,7 +1,7 @@
 # Compaction
 
-> Packages `compaction` and `noa` / `noaadapter`
-> · `compaction/compaction.go`, `noaadapter/noa.go`
+> Packages `compaction` and `fold` / `foldadapter`
+> · `compaction/compaction.go`, `foldadapter/fold.go`
 
 A long-running agent will eventually produce more conversation than fits the model's
 context window. Norma handles this **non-destructively**: the full history is always
@@ -69,19 +69,19 @@ each affected skill verbatim just after the summary — newest-first, under a pe
 (5k) and total (25k) token budget — so standing guidance survives compaction
 (`reinjectSkills`).
 
-## Model-driven compression (`noa`)
+## Model-driven compression (`fold`)
 
-`noa` is an opt-in alternative that inverts the model: instead of the harness writing
-summaries, the **model** writes them through a `Compress` tool, and `noa` decides
+`fold` is an opt-in alternative that inverts the model: instead of the harness writing
+summaries, the **model** writes them through a `Compress` tool, and `fold` decides
 *when* to compress, *which* range, tracks state, and prunes. The core
-(`noa/`) is a pure library — no I/O, no model calls — so its only external dependency,
+(`fold/`) is a pure library — no I/O, no model calls — so its only external dependency,
 the summarizer, is reduced to a string argument. It plugs in as a `ContextView` that
 projects the request view per turn without mutating history.
 
 Enable it with the single, all-or-nothing entry point:
 
 ```go
-err := noaadapter.Enable(&opts, noaadapter.Options{
+err := foldadapter.Enable(&opts, foldadapter.Options{
     ArchiveBaseDir: "/path/to/archive", // REQUIRED: durable home for the originals
     SessionID:      id,
 })
@@ -93,7 +93,7 @@ good summaries. Enabling it disables the built-in compaction. Originals are pres
 in the archive directory (the only route back to compressed content), and compression
 state can be inherited across forks and subagents via `ParentSessionIDs`.
 
-`noa` is a port of acp-kernel; [noa upstream sync](noa-upstream-sync.md) records the
+`fold` is a port of acp-kernel; [fold upstream sync](fold-upstream-sync.md) records the
 upstream baseline, every upstream change since, and what was ported, deferred or
 skipped.
 
@@ -101,6 +101,6 @@ skipped.
 
 - **Built-in compaction** needs no extra tool and no archive; summaries are written by
   your provider automatically. Good default.
-- **Model-driven (`noa`)** gives the model explicit control over what to keep and
+- **Model-driven (`fold`)** gives the model explicit control over what to keep and
   requires a durable archive directory; choose it when you want the agent itself to
   curate its context and you can host the archive.

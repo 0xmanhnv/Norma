@@ -50,7 +50,7 @@ flowchart TB
     Provider["llm.Provider<br/>Anthropic · OpenAI · OpenAI-Responses"]
     Tools["tool.Registry<br/>file / shell / network / deferred"]
     Perm["permission.Evaluate<br/>four-stage pipeline"]
-    Ctx["Compactor<br/>compaction · noa"]
+    Ctx["Compactor<br/>compaction · fold"]
     Hooks["hook.Registry<br/>8 lifecycle points"]
 
     Host --> Core
@@ -111,10 +111,10 @@ flowchart TD
     memory -.tools.-> tool
     hook --> llm
 
-    noaadapter --> noa
-    noaadapter --> agentcore
-    noaadapter --> tool
-    noa --> llm
+    foldadapter --> fold
+    foldadapter --> agentcore
+    foldadapter --> tool
+    fold --> llm
 
     permission --> llm
     compaction --> llm
@@ -136,8 +136,8 @@ flowchart TD
 | `memory` | File-backed long-term memory with a `MEMORY.md` index and recall/record tools. | stdlib |
 | `skill` | Named instruction packages loaded from `SKILL.md`; a `Skill` tool injects one on demand. | `tool`, `llm` |
 | `transcript` | Append-only JSONL persistence and reconstruction for resume. | `llm` |
-| `noa` | An opt-in, model-driven context-compression engine: a pure core that decides *when* and *what* to compress while the model writes the summaries. | `llm` |
-| `noaadapter` | Wires `noa` into a `Session` (a `Compactor` + a `Compress` tool + resident prompt). | `noa`, `agentcore`, `tool` |
+| `fold` | An opt-in, model-driven context-compression engine: a pure core that decides *when* and *what* to compress while the model writes the summaries. | `llm` |
+| `foldadapter` | Wires `fold` into a `Session` (a `Compactor` + a `Compress` tool + resident prompt). | `fold`, `agentcore`, `tool` |
 | `agentcore` | The public `Session` / `Options` / `Run` entry point that aggregates all of the above. | everything above |
 
 `cmd/agentcore` is a runnable CLI demo; `examples/` holds scenario wiring. Neither is
@@ -332,16 +332,16 @@ invocation of each affected skill verbatim just after the summary, newest-first,
 under a per-skill and total token budget, so standing guidance survives compaction
 (`compaction.reinjectSkills`).
 
-### Model-driven compression (`noa` / `noaadapter`)
+### Model-driven compression (`fold` / `foldadapter`)
 
-`noa` is an opt-in alternative that inverts the usual model: instead of the harness
-summarizing, the **model** writes the summaries through a `Compress` tool, and `noa`
+`fold` is an opt-in alternative that inverts the usual model: instead of the harness
+summarizing, the **model** writes the summaries through a `Compress` tool, and `fold`
 decides *when* to compress, *which* range, tracks state, and prunes. The core is a
 pure library with no I/O and no model calls — the summarizer is reduced to a string
 argument. It plugs in as a `harness.ContextView` that projects the request view per
 turn without mutating history.
 
-`noaadapter.Enable(opts, …)` is the single, all-or-nothing entry point: it attaches a
+`foldadapter.Enable(opts, …)` is the single, all-or-nothing entry point: it attaches a
 `Compactor`, adds the `Compress` tool, and appends the resident prompt sections
 together (they must live or die together). Enabling it disables the built-in
 `compaction` — the two are mutually exclusive, enforced in `agentcore.NewSession`.

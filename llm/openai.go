@@ -172,7 +172,7 @@ const reasoningElidedPlaceholder = "(reasoning elided by context compaction)"
 
 // sanitizeOpenAIMessages enforces, at the provider boundary, the two structural
 // invariants OpenAI-compatible endpoints validate — regardless of what produced
-// req.Messages (noa compaction, the built-in compactor, or a host that assembled
+// req.Messages (fold compaction, the built-in compactor, or a host that assembled
 // them directly):
 //
 //   - Every assistant tool_call is answered by a following role:tool message,

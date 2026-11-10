@@ -76,7 +76,7 @@ func TestCompactorOnly(t *testing.T) {
 	}
 }
 
-// Without Compactor the built-in compaction is used — the pre-noa behaviour.
+// Without Compactor the built-in compaction is used — the pre-fold behaviour.
 func TestCompactionUsedWhenNoCompactor(t *testing.T) {
 	s := NewSession(Options{Compaction: &compaction.Config{ContextWindow: 200000}})
 	if s.compactor == nil {
