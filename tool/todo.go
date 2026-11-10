@@ -19,10 +19,31 @@ const (
 	TodoCompleted  TodoStatus = "completed"
 )
 
+// TodoRef optionally links a todo to a record the host keeps, so the host can
+// annotate the todo's real status from its own truth instead of trusting the
+// model's manual mark. Both fields are opaque strings to the harness — the host
+// populates and interprets them. The zero value (both empty) means "no link":
+// the todo is an ordinary free-text item and behaves exactly as before.
+type TodoRef struct {
+	// IntentID names a unit of work the host tracks (e.g. an exploration intent
+	// id). Empty when this todo does not track one.
+	IntentID string `json:"intent_id,omitempty"`
+	// CoverageCell names a coverage-matrix cell the host tracks. Empty when this
+	// todo does not track one.
+	CoverageCell string `json:"coverage_cell,omitempty"`
+}
+
+// Empty reports whether the ref links to nothing — a plain free-text todo.
+func (r TodoRef) Empty() bool { return r.IntentID == "" && r.CoverageCell == "" }
+
 // Todo is one task in the agent's working plan.
 type Todo struct {
 	Content string     `json:"content"`
 	Status  TodoStatus `json:"status"`
+	// Ref optionally links this todo to a host record (see TodoRef). Empty =
+	// a free-text todo, the default and the backward-compatible behavior: a
+	// todo written without a ref decodes to the zero TodoRef.
+	Ref TodoRef `json:"ref,omitempty"`
 }
 
 // TodoStore holds the current todo list across tool calls. It is safe for
@@ -54,7 +75,7 @@ func (s *TodoStore) Tool() CoreTool {
 	return Build(Spec{
 		Name:        TodoWriteName,
 		Description: "Records and updates a structured todo list for the current task. Use it to plan multi-step work and to mark progress — replace the whole list each call, marking exactly one item in_progress while working.",
-		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions.",
+		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions. Optional ref: when a todo tracks a specific host record (an intent or a coverage cell), attach its id in ref so the host can confirm completion from its own records instead of your manual mark; leave ref out for a plain item.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -65,6 +86,14 @@ func (s *TodoStore) Tool() CoreTool {
 						"properties": map[string]any{
 							"content": map[string]any{"type": "string"},
 							"status":  map[string]any{"type": "string", "enum": []any{"pending", "in_progress", "completed"}},
+							"ref": map[string]any{
+								"type":        "object",
+								"description": "Optional. Links this todo to a host record so its completion is verified from the host's truth, not the manual mark. Omit for a plain todo.",
+								"properties": map[string]any{
+									"intent_id":     map[string]any{"type": "string", "description": "id of the unit of work this todo tracks"},
+									"coverage_cell": map[string]any{"type": "string", "description": "key of the coverage-matrix cell this todo tracks"},
+								},
+							},
 						},
 						"required": []any{"content", "status"},
 					},
