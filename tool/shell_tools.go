@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/0xmanhnv/norma/permission"
+	"github.com/0xmanhnv/corvid/permission"
 )
 
 // The interactive-shell tool family (opt-in; NOT in DefaultTools). ShellSessionTools

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xmanhnv/norma/agentcore"
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/agentcore"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // pressureSession builds a session whose view is large enough to sit in the
@@ -145,7 +145,7 @@ func TestNudgeSuppressionResetsOnUserTurn(t *testing.T) {
 	}
 }
 
-// Norma packs tool results into user-role messages, so the role alone cannot
+// Corvid packs tool results into user-role messages, so the role alone cannot
 // distinguish a person speaking from a tool answering.
 func TestIsRealUserTurn(t *testing.T) {
 	if !isRealUserTurn(userText("hello")) {

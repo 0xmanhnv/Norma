@@ -15,7 +15,7 @@ import (
 // host can put an object store, a shared volume or anything addressable behind
 // it instead (ToolContext.Spill, harness.QueryInput.SpillStore).
 //
-// norma never interprets what a store returns. The locator addresses bytes and
+// corvid never interprets what a store returns. The locator addresses bytes and
 // nothing more; what a slice of a stored item means is the business of whoever
 // reads it.
 type SpillStore interface {
@@ -42,7 +42,7 @@ const (
 // Spilled is a stored item's receipt.
 type Spilled struct {
 	// Locator is the store's opaque address for the item (for LocalSpill, an
-	// absolute file path). Hosts may keep it; norma passes it through.
+	// absolute file path). Hosts may keep it; corvid passes it through.
 	Locator string
 	// Guidance is the sentence the model reads after the kept head: how to get
 	// the rest. It should name the locator and a way to read from it that the

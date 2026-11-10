@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // record is a declared-output value with a field the renderer never shows.

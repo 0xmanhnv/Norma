@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/0xmanhnv/norma/fold"
+	"github.com/0xmanhnv/corvid/fold"
 )
 
 // DeadRangeTracker breaks the loop where a model keeps asking to compress refs

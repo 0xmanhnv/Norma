@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // Options configures one fold-managed session.
@@ -275,7 +275,7 @@ func (s *Session) notePriorTurnOutcome(msgs []llm.Message) {
 
 // isRealUserTurn distinguishes a person speaking from a packaged tool result.
 //
-// Norma carries tool results in Role: user messages, so the role alone says
+// Corvid carries tool results in Role: user messages, so the role alone says
 // nothing; the absence of any tool_result block is what marks a real turn.
 func isRealUserTurn(m llm.Message) bool {
 	if m.Role != llm.RoleUser {

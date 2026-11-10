@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/0xmanhnv/norma/fold"
+	"github.com/0xmanhnv/corvid/fold"
 )
 
 // fileArchiver writes archives under <root>/tier<N>/.

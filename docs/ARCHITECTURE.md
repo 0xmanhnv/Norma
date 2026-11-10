@@ -1,13 +1,13 @@
-# Norma Architecture
+# Corvid Architecture
 
 > How the pieces fit together, verified against the source on the `patches` branch.
 > Every diagram below reflects real control flow; package and file paths are cited so
 > you can read the code next to the prose. When a doc and the code disagree, the code wins —
 > please open an issue.
 
-Norma is an **agent harness**: the machinery that turns a language model into an
+Corvid is an **agent harness**: the machinery that turns a language model into an
 autonomous agent. A host supplies a model, a system prompt, a set of tools, and a
-safety policy; Norma runs the loop that lets the model think, call tools, observe
+safety policy; Corvid runs the loop that lets the model think, call tools, observe
 results, and continue until it is done — while the host keeps control of every
 boundary that matters.
 
@@ -287,7 +287,7 @@ model to save context and discovered on demand via `SearchExtraTools` /
 
 ## 5. Context and compaction
 
-Norma keeps a conversation inside the model's window **non-destructively**: history
+Corvid keeps a conversation inside the model's window **non-destructively**: history
 is retained in full; only the projection sent to the provider shrinks. There are two
 independent, mutually exclusive context managers — a session holds exactly one.
 

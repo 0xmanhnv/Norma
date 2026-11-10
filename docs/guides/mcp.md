@@ -2,14 +2,14 @@
 
 > Package `mcp` · `mcp/mcp.go`
 
-Model Context Protocol lets an agent use tools exposed by a separate program. Norma
+Model Context Protocol lets an agent use tools exposed by a separate program. Corvid
 integrates MCP tools as ordinary `tool.CoreTool`s, so the loop, scheduler, and
 permission pipeline treat them exactly like built-in tools. Every MCP tool is named
 `mcp__<server>__<tool>` (`mcp.ToolName`).
 
 ## Two kinds of server
 
-**External (stdio).** Norma speaks JSON-RPC 2.0 over a newline-delimited stdio
+**External (stdio).** Corvid speaks JSON-RPC 2.0 over a newline-delimited stdio
 transport to an external MCP server process, lists its tools, and adapts each into a
 `CoreTool`. This is the standard way to pull in third-party MCP servers.
 

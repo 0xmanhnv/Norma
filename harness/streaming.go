@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // streamExec is the streaming tool executor: tool_use blocks are registered as

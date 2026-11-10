@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // Tools returns the RecallMemory and RecordMemory tools bound to a store.

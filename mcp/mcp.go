@@ -12,9 +12,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // ToolName builds the three-segment MCP tool name.
@@ -189,7 +189,7 @@ func (c *Client) initialize(ctx context.Context) error {
 	_, err := c.conn.call(ctx, "initialize", map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "norma", "version": "0.2"},
+		"clientInfo":      map[string]any{"name": "corvid", "version": "0.2"},
 	})
 	if err != nil {
 		return err

@@ -90,7 +90,7 @@ func preservedByConfig(entry string, preserve []string) bool {
 // that call's result as well; older instances are left compressible.
 //
 // A call without an id cannot be paired with its result and is not protected
-// here — Norma's tool calls always carry one.
+// here — Corvid's tool calls always carry one.
 //
 // Ported from acp-kernel (MIT, Copyright © 2026 ranxianglei): src/protected.ts,
 // collectLatestProtected.

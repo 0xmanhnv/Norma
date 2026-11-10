@@ -1,6 +1,6 @@
 # Capability matrix
 
-What Norma can do, which package owns it, how you turn it on, and where to read more.
+What Corvid can do, which package owns it, how you turn it on, and where to read more.
 Everything here is verified against the source on `patches`. "Default" means it is
 active without any configuration; "opt-in" means you set the listed `Options` field.
 

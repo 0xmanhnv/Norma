@@ -1,6 +1,6 @@
-# Norma documentation
+# Corvid documentation
 
-Norma is a general-purpose **agent harness SDK in Go**: the engine that turns a
+Corvid is a general-purpose **agent harness SDK in Go**: the engine that turns a
 language model into an autonomous agent — a streaming tool-use loop where the model
 reads, runs, and reasons its way through a task while the host keeps control of the
 prompt, the tools, and the safety boundary.
@@ -10,9 +10,9 @@ architecture overview or a per-subsystem guide.
 
 ## Start here
 
-**If you want to *use* Norma to build an agent:**
+**If you want to *use* Corvid to build an agent:**
 
-1. [Top-level README](../README.md) — what Norma is, the quickstart, and the CLI demo.
+1. [Top-level README](../README.md) — what Corvid is, the quickstart, and the CLI demo.
 2. [Agent loop guide](guides/agent-loop.md) — what one `Prompt` actually does, and the
    events you range over.
 3. [Tools guide](guides/tools.md) — the built-in toolset and how to add your own.
@@ -21,7 +21,7 @@ architecture overview or a per-subsystem guide.
    context window.
 6. The runnable [`examples/`](../examples/) — four scenarios wired end to end.
 
-**If you want to *understand or contribute to* Norma:**
+**If you want to *understand or contribute to* Corvid:**
 
 1. [ARCHITECTURE.md](ARCHITECTURE.md) — the whole system with diagrams and a package map.
 2. [CONTRIBUTING.md](../CONTRIBUTING.md) — build, test, layout, and conventions.
@@ -34,7 +34,7 @@ architecture overview or a per-subsystem guide.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — big picture, package map, the agent loop, the
   permission pipeline, compaction, subagents, the event model, and transcript/resume,
   with verified Mermaid diagrams.
-- [CAPABILITIES.md](CAPABILITIES.md) — the capability matrix: what Norma can do, which
+- [CAPABILITIES.md](CAPABILITIES.md) — the capability matrix: what Corvid can do, which
   package owns it, and how to turn it on.
 
 ## Subsystem guides
@@ -58,7 +58,7 @@ One page per major subsystem. Deep but accurate; each cites the code.
 - **Code wins.** Every architectural claim is checked against the source and cites a
   package or file. If a doc and the code disagree, the code is right — please open an
   issue.
-- **Domain-neutral.** Norma is a harness, not an application. These docs describe the
+- **Domain-neutral.** Corvid is a harness, not an application. These docs describe the
   engine, never a specific product built on it.
 - **Stable vocabulary.** The same word means the same thing everywhere: *turn*, *tool
   call*, *boundary*, *mode*, *terminal reason*.

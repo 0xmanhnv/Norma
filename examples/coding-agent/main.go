@@ -23,13 +23,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xmanhnv/norma/agentcore"
-	"github.com/0xmanhnv/norma/compaction"
-	"github.com/0xmanhnv/norma/harness"
-	"github.com/0xmanhnv/norma/hook"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/permission"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/agentcore"
+	"github.com/0xmanhnv/corvid/compaction"
+	"github.com/0xmanhnv/corvid/harness"
+	"github.com/0xmanhnv/corvid/hook"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 func main() {

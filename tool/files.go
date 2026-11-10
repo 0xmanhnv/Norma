@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // NewRead builds the Read tool: reads a file with cat -n style line numbers and

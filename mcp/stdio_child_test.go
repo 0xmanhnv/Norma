@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // A stdio MCP server is a child like any other: Deny refuses it, CleanEnv

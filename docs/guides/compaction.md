@@ -4,7 +4,7 @@
 > · `compaction/compaction.go`, `foldadapter/fold.go`
 
 A long-running agent will eventually produce more conversation than fits the model's
-context window. Norma handles this **non-destructively**: the full history is always
+context window. Corvid handles this **non-destructively**: the full history is always
 retained in the message array; only the projection sent to the provider shrinks. A
 session has exactly one context manager — the built-in compactor **or** the
 model-driven engine, never both (`agentcore.NewSession` enforces this).

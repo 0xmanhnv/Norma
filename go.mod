@@ -1,4 +1,4 @@
-module github.com/0xmanhnv/norma
+module github.com/0xmanhnv/corvid
 
 go 1.26.3
 

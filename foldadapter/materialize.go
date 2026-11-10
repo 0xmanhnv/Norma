@@ -3,8 +3,8 @@ package foldadapter
 import (
 	"time"
 
-	"github.com/0xmanhnv/norma/fold"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/fold"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // Materialize applies a session's compression state to a message array so the

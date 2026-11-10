@@ -9,7 +9,7 @@ import (
 
 // Code is a stable, machine-routable error class. Branch on a Code, never on
 // an error's text: messages change and vary by provider and language, codes do
-// not. Codes are lowercase snake_case. The ones norma assigns are declared
+// not. Codes are lowercase snake_case. The ones corvid assigns are declared
 // here and next to the packages that raise them (tool.CodeInvalidInput, …);
 // a host defining its own should prefix them so they cannot collide.
 type Code string
@@ -39,7 +39,7 @@ const (
 	CodeInvalidArgument Code = "invalid_argument"
 )
 
-// Error is norma's base error: a stable Code for routing, a Message for
+// Error is corvid's base error: a stable Code for routing, a Message for
 // people, and an optional Cause kept for errors.Is / errors.As.
 //
 // Error() reads exactly like the message the same failure produced before

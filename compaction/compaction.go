@@ -24,7 +24,7 @@ import (
 	"context"
 	"sort"
 
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // Summarizer condenses messages into a digest. Injected so the host controls
@@ -143,7 +143,7 @@ func EstimateTokens(msgs []llm.Message) int {
 	return chars / 4
 }
 
-// blockChars is the per-block character footprint. A Norma ContentBlock has no
+// blockChars is the per-block character footprint. A Corvid ContentBlock has no
 // image/document type; if one is added, its fixed 2000-token cost (claude-code
 // IMAGE_MAX_TOKEN_SIZE) would be added here.
 func blockChars(b llm.ContentBlock) int {

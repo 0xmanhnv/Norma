@@ -3,8 +3,8 @@ package foldadapter
 import (
 	"context"
 
-	"github.com/0xmanhnv/norma/compaction"
-	"github.com/0xmanhnv/norma/llm"
+	"github.com/0xmanhnv/corvid/compaction"
+	"github.com/0xmanhnv/corvid/llm"
 )
 
 // Compactor adapts a Session to the harness's context-manager interfaces.

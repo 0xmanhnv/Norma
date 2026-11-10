@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // stdioCloser shuts down a spawned MCP server process and its pipes.

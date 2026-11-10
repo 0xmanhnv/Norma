@@ -77,7 +77,7 @@ func TestStampNudgeKeepsShownReferenceOnSmallDrop(t *testing.T) {
 //
 // fold's MatchToolPattern already lowercased both sides; these pin it for every
 // knob built on it, so a host whose tools are named "read" or "READ" gets the
-// same protection as one using Norma's "Read".
+// same protection as one using Corvid's "Read".
 
 func TestMatchToolPatternIgnoresCase(t *testing.T) {
 	cases := []struct {
@@ -132,7 +132,7 @@ func TestProtectedToolKnobsIgnoreCase(t *testing.T) {
 	}
 }
 
-// Norma's own Compress tool stays an exact match, as upstream's always-protected
+// Corvid's own Compress tool stays an exact match, as upstream's always-protected
 // list does: a differently-cased "compress" is not the tool fold registered.
 func TestAlwaysProtectedToolsStayExact(t *testing.T) {
 	cfg := DefaultConfig(1000)
@@ -145,7 +145,7 @@ func TestAlwaysProtectedToolsStayExact(t *testing.T) {
 }
 
 // A fresh "read" result (lowercase host naming) stays out of the recent zone,
-// exactly as Norma's "Read" does.
+// exactly as Corvid's "Read" does.
 func TestComputeProtectedRefsLowercaseReadStaysCompressible(t *testing.T) {
 	msgs := []CoreMessage{
 		msg("a", RoleUser, CTText, "old alpha"),

@@ -3,10 +3,10 @@ package agentcore
 import (
 	"testing"
 
-	"github.com/0xmanhnv/norma/compaction"
-	"github.com/0xmanhnv/norma/harness"
-	"github.com/0xmanhnv/norma/llm"
-	"github.com/0xmanhnv/norma/tool"
+	"github.com/0xmanhnv/corvid/compaction"
+	"github.com/0xmanhnv/corvid/harness"
+	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/tool"
 )
 
 // fold is opt-in: a host that never calls foldadapter.Enable must get exactly the

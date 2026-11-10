@@ -3,7 +3,7 @@
 > Packages `fold` / `foldadapter` · upstream: [acp-kernel](https://github.com/ranxianglei/acp-kernel) (MIT; MIT plus an attribution term from v0.0.98)
 
 `fold` is a Go port of acp-kernel's compression core. This page records where the port
-was taken from, everything upstream changed since, and what Norma did about each
+was taken from, everything upstream changed since, and what Corvid did about each
 change. It is the reference for the next sync: start from the "pinned" commit below
 and walk forward.
 
@@ -71,7 +71,7 @@ license term was accepted in #23, then re-decided — see the sync log).
 | `fe26671` (09-15) fold gate | A fold must never split a tool call from its result. The protected-zone carve can leave the call in the range and the result out of it; the call folds, prune then strips the visible result as an orphan, and that output is silently gone. | No — only the turn (reasoning) invariant. | High / small / low. | **Port now** (`ComputeIntegrityWithdrawals`). |
 | `bc0b7ee` (09-16) | Both invariants (turn, pair) re-checked to a fixed point — fixing one can break the other. The recommendation runs the same gate, so it never advertises a range the fold always empties. | No. | High / small / low. | **Port now**. |
 | `fe26671` (09-15) prune anchor | A summary placed at its block's earliest message can land between a parallel burst's calls and their results; strict providers reject that. Anchor moves past the result. | No. | High / small / low. | **Port now** (`pairSafeAnchorIndex`). |
-| `2f60bfb` (09-15) | A summary landing inside an assistant run splits one provider message; its tool calls lose their reasoning. Anchor moves to the run's start. Applies to Norma: `Reassemble` breaks host messages at synthetic messages. | No. | High / small / low. | **Port now**. |
+| `2f60bfb` (09-15) | A summary landing inside an assistant run splits one provider message; its tool calls lose their reasoning. Anchor moves to the run's start. Applies to Corvid: `Reassemble` breaks host messages at synthetic messages. | No. | High / small / low. | **Port now**. |
 | `1f35417` (09-16) | `mergeRangesToThreshold` no longer emits a sub-threshold tail batch (guaranteed rejection); it folds into the batch before it or is dropped. | No. | Medium / small / low. | **Port now**. |
 | `6996cf6` (09-22) | Batching never bridges an active block: a recommended span over a block sent the model into "already compressed" on a sub-range. | No; and in a pruned view the summary was skipped as unaddressable, so `fold` could not even see the block. | High / small / medium. | **Port now, with a deviation** — see below. |
 | `23a7e4e` (09-17) | Ranges carry their view positions; the nudge's range table orders and merges by position, not ref number. | No. | Medium / small / low. | **Port now**. |
@@ -88,7 +88,7 @@ license term was accepted in #23, then re-decided — see the sync log).
 | `8a9ffbd`, `cbc78fb` (09-09) | Parse tag-prefixed / stringified Compress call text; stub live summaries. | Yes. Upstream also drops consumed sibling entries of a partly-live batch; `fold` only stubs them (≤200 chars). | Low. | Port later (small token saving). |
 | `ab9c229`, `f8a8885` (09-27) | Re-mint live ids that collide with a folded copy. | N/A — the occurrence counter already gives a repeated message its own id. | — | Skip. |
 | `a587c0c` (09-28, v0.0.99) | Re-anchor nudge cadence when the count drops below the shown reference. | No. | Medium / small / low. | **Ported** (#24): `stampNudge` re-anchors when the count falls a full growth step below `LastNudgeShownTokens` as well as below the baseline. |
-| `2cc21fa` (09-30, v0.0.100) | Case-insensitive protected tool names. | Yes — `MatchToolPattern` already lowercased both sides, so every knob built on it (`ProtectedTools`, `ProtectedLatestTools`, the recent-zone lists) matched across casings. | Low. | **Tests ported** (#24); no code change. `AlwaysProtectedTools` stays an exact match on Norma's `Compress`, as upstream's always-protected list does. |
+| `2cc21fa` (09-30, v0.0.100) | Case-insensitive protected tool names. | Yes — `MatchToolPattern` already lowercased both sides, so every knob built on it (`ProtectedTools`, `ProtectedLatestTools`, the recent-zone lists) matched across casings. | Low. | **Tests ported** (#24); no code change. `AlwaysProtectedTools` stays an exact match on Corvid's `Compress`, as upstream's always-protected list does. |
 | `78df864` (10-02, v0.0.101) | Build prune/recommend indexes once per turn (performance). | Half — `fold`'s recommend already built the covered-id set once per call; prune rebuilt the anchor-pairing scan for every block (O(blocks × messages)). | Low-medium / small / low. | **Ported** (#26): `buildAnchorPairingIndex` once per prune pass. Output is identical — a differential test checks it against the old full scan on 3,000 random histories. |
 | `79f1cba` (09-29, v0.0.99) | Linear-time line-form split. | N/A (no line form yet). | — | Port later, with the line form. |
 
@@ -116,7 +116,7 @@ protected messages, which `ApplyCompression` excludes with a warning anyway.
 | `5d2961a`… (09-25) | Refold-in-place of inline-restored blocks. | N/A — needs a decompress tool; `fold` restores through the archive file. | — | Skip. |
 | `40656fa`… (09-23→27) | CCR content store + `acp_retrieve`. | N/A — `fold`'s archive is the content store. | — | Skip. |
 | `b8c17c2`, `c6dd2bf` (09-23) | Tool-result valuator and deterministic "crush" plugins (absorb gate). | No. | Medium / large (~1.8k lines). | Port later, as its own project. |
-| `397d4b6`, `0d547b3`, `3e643ac`, `35f06bd`, `90588d1`, `035b489` | Image routing/downsampling, historical image stripping, media-preserving wire fixes. | N/A — Norma's `llm` has no image blocks. | — | Skip until Norma carries images. |
+| `397d4b6`, `0d547b3`, `3e643ac`, `35f06bd`, `90588d1`, `035b489` | Image routing/downsampling, historical image stripping, media-preserving wire fixes. | N/A — Corvid's `llm` has no image blocks. | — | Skip until Corvid carries images. |
 | `0bf90ba`, `f127fac`, `51baf8d`, `5a169bc`, `2e32dca` | Prompt-cache reconciliation report. | No. | Low for a library. | Skip (host diagnostics). |
 | `7d9487e` (09-23) | Output steering (verbosity / effort routing). | No. | — | Skip (host policy, not compression). |
 | `4b803eb`, `f1bd0c1`, `ef67d28`… | Surface-text overrides and prompt packs. | `fold` has `Sections` / `NudgeSections`. | Low. | Skip. |

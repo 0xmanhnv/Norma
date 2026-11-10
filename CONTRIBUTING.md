@@ -1,17 +1,17 @@
-# Contributing to Norma
+# Contributing to Corvid
 
-Thanks for your interest in improving Norma. This guide covers how to build and test
+Thanks for your interest in improving Corvid. This guide covers how to build and test
 the project, how it is laid out, and the conventions the code follows. For a mental
 model of the system before you change it, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Fork model
 
-Norma is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma).
+Corvid is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma).
 
 - The **`patches`** branch is where fork development happens and holds the current API.
   Base your branches on `patches` and open pull requests against it.
 - Releases are tagged `v0.4.4-p.N`.
-- Keep the upstream copyright and `LICENSE` intact. Norma is Apache-2.0; contributions
+- Keep the upstream copyright and `LICENSE` intact. Corvid is Apache-2.0; contributions
   are accepted under the same license.
 - Preserve third-party notices. Some paths are derived from other projects under their
   own license (e.g. `fold` / `foldadapter`, ported from acp-kernel under the MIT License).
@@ -84,7 +84,7 @@ else in the tree. See the package map in [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 - **Code is the source of truth.** Docs cite package/file paths and must match the
   code; when they drift, fix the doc (or the code) in the same spirit. Every package
   opens with a doc comment that states its job — keep it accurate.
-- **The harness stays domain-neutral.** Norma is an engine, not an application. It
+- **The harness stays domain-neutral.** Corvid is an engine, not an application. It
   ships no preset system prompt and no scenario logic; those belong in `examples/` or
   in the host. Don't bake a use case into the core.
 - **Tools fail closed.** A new tool defaults to not-read-only, not-concurrency-safe,
