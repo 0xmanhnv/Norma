@@ -78,7 +78,10 @@ Every exit carries a typed `TerminalReason` on the final `KindResult` event
 (`harness/event.go`): `completed`, `max_turns`, `timeout`, `model_error`,
 `prompt_too_long`, `aborted_streaming`, `aborted_tools`, `stop_hook_prevented`,
 `hook_stopped`, `blocking_limit`, `image_error`. The `Terminal` struct also carries
-the final usage, turn count, a full message snapshot, and the assistant's final text.
+the error (if any), the run's own usage, what its subagents used (`SubagentUsage`,
+kept separate), the turn count, a full message snapshot, and the assistant's final
+text. If the host stops ranging before the end, no `KindResult` is sent;
+`QueryInput.OnExit` still receives a `Terminal` with reason `consumer_stopped`.
 
 ## Streaming vs non-streaming
 

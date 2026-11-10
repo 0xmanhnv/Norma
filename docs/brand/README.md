@@ -20,19 +20,26 @@ The README picks the banner that matches the reader's theme with a `<picture>` e
 
 | Role | Light | Dark |
 |---|---|---|
-| Ink (wordmark, darkest fold) | `#1F2328` | `#E6EDF3` |
-| Folds | `#2A2F35`, `#353B42`, `#58616C` | `#3A424C`, `#454D57`, `#4F5863`, `#7C8692` |
+| Ink (wordmark) | `#1F2328` | `#E6EDF3` |
+| Folds (darkest first) | `#1F2328`, `#2A2F35`, `#353B42`, `#58616C` | `#3A424C`, `#454D57`, `#4F5863`, `#7C8692` |
 | Beak and the dot on the *i* | `#00ADD8` | `#22C4E8` |
+| Beak highlight (55% opacity) | `#7FE3F5` | `#B8F2FC` |
+| Eye | `#F2F4F6` | `#E6EDF3` |
+| Tagline | `#57606A` | `#8B949E` |
 | Background | `#F6F8FA` | `#0D1117` |
 
-The beak colour is the one accent. It appears once in the mark and once in the
-wordmark, and nowhere else.
+`icon.svg` sits on a `#1F2328` tile and uses its own lighter folds (`#5A636E`,
+`#646D78`, `#6E7884`, `#9AA3AD`) with the dark-theme beak.
+
+The beak colour is the one accent. It appears once in the mark (with its highlight)
+and once in the wordmark, and nowhere else.
 
 ## Wordmark
 
 Lower case, single-weight strokes with round ends, drawn as paths so it renders the same
 everywhere without a font. Keep the dot on the *i* in the accent colour. The tagline, when
-there is one, is "An agent harness for Go", set in the system sans-serif.
+there is one, is "An agent harness for Go", set in Inter with the system sans-serif
+as the fallback.
 
 ## Please don't
 

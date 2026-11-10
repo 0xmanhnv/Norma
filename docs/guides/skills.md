@@ -29,8 +29,10 @@ mcps: [github]             # optional: MCP servers this skill unlocks when invok
 
 ## How invocation works
 
-A `skill.Registry` exposes a single `Skill` tool (added via `Options.Skills`). When
-the model invokes a skill, its instructions are injected into the conversation as an
+Load skills with `skill.LoadDir(dir)` (each skill is a subdirectory holding a
+`SKILL.md`, or a bare `.md` file) or build them in code with `skill.NewRegistry`. A
+`skill.Registry` exposes a single `Skill` tool (added via `Options.Skills`). When the
+model invokes a skill, its instructions are injected into the conversation as an
 **independent message** — not buried in a tool result — so they become standing
 guidance for subsequent turns (this uses `tool.Result.Extra`).
 
@@ -44,7 +46,10 @@ That is why skills are reliable even in very long sessions.
 
 ## Unlocking tools
 
-A skill that declares `mcps:` can unlock those servers' deferred tools on invocation:
-the registry's hook adds them to the session's `UnlockSet` so the model may call them
-only once the relevant skill is active. This keeps a large tool surface gated behind
-the skill that justifies it.
+A skill that declares `mcps:` can unlock those servers' deferred tools on invocation.
+The registry does not do this by itself: set `Registry.OnInvoke`, which runs when a
+skill is invoked, and have it `Add` the servers' tools to the session's `UnlockSet`
+(`Session.UnlockSet()`, or the set you passed in `Options.UnlockSet`). Its return
+string is appended to the tool output, which is the place to list the newly available
+tool names. The model can then call them only once the relevant skill is active,
+which keeps a large tool surface gated behind the skill that justifies it.

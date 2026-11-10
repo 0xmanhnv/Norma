@@ -11,7 +11,21 @@ permission pipeline treat them exactly like built-in tools. Every MCP tool is na
 
 **External (stdio).** Corvid speaks JSON-RPC 2.0 over a newline-delimited stdio
 transport to an external MCP server process, lists its tools, and adapts each into a
-`CoreTool`. This is the standard way to pull in third-party MCP servers.
+`CoreTool`. This is the standard way to pull in third-party MCP servers:
+
+```go
+c, err := mcp.NewStdioClient(ctx, "files", "my-mcp-server", nil /* extra env */, "--stdio")
+if err != nil {
+    return err
+}
+defer c.Close()
+tools, err := c.Tools(ctx) // one CoreTool per server tool: mcp__files__<tool>
+// append tools to Options.Tools
+```
+
+A tool result's text becomes the model-facing content. A server's
+`structuredContent` is kept as the typed value in `Result.Data`, provided it is
+present and, when the tool declares an `outputSchema`, valid against it.
 
 **In-process.** `mcp.InProcessServer(name, tools)` adapts a set of plain Go functions
 to the same `mcp__<server>__<tool>` naming, with no subprocess:

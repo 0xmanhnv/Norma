@@ -22,7 +22,7 @@ subagent.Config{
             Description:    "Read-only codebase explorer.",
             Prompt:         []string{"You explore and report; you never edit."},
             Tools:          []string{"Read", "Glob", "Grep"}, // empty = inherit all
-            PermissionMode: permission.ModePlan,
+            PermissionMode: permission.ModePlan, // can only tighten the parent's mode
             MaxTurns:       20,
         },
     },
@@ -30,11 +30,23 @@ subagent.Config{
 }
 ```
 
+`subagent.NewTool(cfg)` builds the `Agent` tool; add it to the parent's
+`Options.Tools`. `subagent.Run` runs a named agent straight from Go code, with no
+parent model deciding to call it (the coordinator's `RunParallel` uses it). `Config`
+also takes the `CanUseTool` callback and `Hooks` the children use, and a `Transcript`
+store.
+
+A child started from a tool call inherits the calling run's deny and allow rules,
+`BashEnv`, output-spill settings, tracer, `OnToolResult`, `RewriteToolResult` and
+`Settlement`, and runs in the stricter of its own and its parent's permission mode
+(`harness.StricterMode`). Delegation never loosens the policy.
+
 Recursion is bounded by a depth guard carried on the `context.Context`
 (`MaxDepth`), so a subagent that spawns subagents cannot recurse without limit. When a
 `transcript.Store` is configured, each subagent run is persisted to its own sidechain
-file under the parent session, and its tokens are accounted there, separate from the
-parent's totals.
+file under the parent session. Its token usage is kept apart from the parent's own:
+the parent's `Terminal.SubagentUsage` sums everything its subagents used, all the way
+down, while `Terminal.Usage` counts only the parent's model calls.
 
 ## Coordinator mode
 

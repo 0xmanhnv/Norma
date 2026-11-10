@@ -19,7 +19,7 @@ architecture overview or a per-subsystem guide.
 4. [Permissions guide](guides/permissions.md) — the safety boundary you configure.
 5. [Compaction guide](guides/compaction.md) — keeping a long conversation inside the
    context window.
-6. The runnable [`examples/`](../examples/) — four scenarios wired end to end.
+6. The runnable [`examples/`](../examples/) — six scenarios wired end to end.
 
 **If you want to *understand or contribute to* Corvid:**
 
@@ -32,8 +32,8 @@ architecture overview or a per-subsystem guide.
 ## Architecture
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — big picture, package map, the agent loop, the
-  permission pipeline, compaction, subagents, the event model, and transcript/resume,
-  with verified Mermaid diagrams.
+  permission pipeline, compaction, subagents, MCP / skills / memory / plan mode / hooks,
+  background jobs, the event model, and transcript/resume, with Mermaid diagrams.
 - [CAPABILITIES.md](CAPABILITIES.md) — the capability matrix: what Corvid can do, which
   package owns it, and how to turn it on.
 - [brand/](brand/README.md) — the logo, wordmark, colours and how to use them.
@@ -45,14 +45,15 @@ One page per major subsystem. Deep but accurate; each cites the code.
 | Guide | Package | What it covers |
 |---|---|---|
 | [Agent loop](guides/agent-loop.md) | `harness` | The turn lifecycle, recovery paths, continuation gates, termination reasons. |
-| [Tools](guides/tools.md) | `tool` | The `CoreTool` contract, fail-closed defaults, the built-in set, typed output, deferred tools. |
-| [Permissions](guides/permissions.md) | `permission` | Decisions, the six modes, deny-priority, the four-stage pipeline. |
+| [Tools](guides/tools.md) | `tool` | The `CoreTool` contract, fail-closed defaults, the built-in set, output caps and spill stores, typed output, deferred tools. |
+| [Permissions](guides/permissions.md) | `permission` | Decisions, the six modes, deny-priority, the four-stage pipeline, rule syntax. |
 | [Compaction](guides/compaction.md) | `compaction`, `fold` | Non-destructive context management; built-in vs model-driven. |
 | [Subagents](guides/subagents.md) | `subagent`, `coordinator` | Context-isolated delegation and multi-agent coordination. |
 | [MCP](guides/mcp.md) | `mcp` | External and in-process Model Context Protocol tools. |
 | [Skills](guides/skills.md) | `skill` | Named instruction packages that survive compaction. |
 | [Memory](guides/memory.md) | `memory` | File-backed long-term memory and auto-injection. |
-| [Background jobs](guides/jobs.md) | `tool` (Manager) | Out-of-band tasks and their notifications. |
+| [Background jobs](guides/jobs.md) | `tool` (Manager) | Out-of-band tasks, their notifications, and the output and memory caps. |
+| [fold upstream sync](guides/fold-upstream-sync.md) | `fold`, `foldadapter` | Where the `fold` port comes from, and every upstream change since: ported, deferred or skipped. |
 
 ## Conventions in these docs
 

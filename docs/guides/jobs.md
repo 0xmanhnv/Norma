@@ -9,16 +9,18 @@ jobs let the agent start such work, keep going, and be told when it finishes.
 
 When background tasks are enabled, each session gets a per-session `tool.Manager`
 (`agentcore.NewSession`) that runs long commands out of band and collects their
-output and completion notifications. Four tools read and control it:
+output and completion notifications. **Bash** starts a background task when the model
+sets `run_in_background`, and the session adds four tools that start, read and control
+tasks:
 
 | Tool | Does |
 |---|---|
+| **Monitor** | Start a long-running streaming command (`tail -f`, a dev server, a polling loop) in the background and return at once with a task id. |
 | **TaskOutput** | Read a running (or finished) task's accumulated output. |
 | **TaskStop** | Stop a task. |
 | **TaskList** | List the session's tasks and their status. |
-| **Monitor** | Wait on a task / condition. |
 
-(The default **Sleep** tool, a context-cancellable wait, pairs with these for polling.)
+(The default **sleep** tool, a context-cancellable wait, pairs with these for polling.)
 
 ## How completions reach the model
 

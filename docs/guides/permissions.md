@@ -20,9 +20,14 @@ ModeDefault     // ask for anything not read-only, unless a rule allows it
 ModeAcceptEdits // auto-allow file edits (Write / Edit / NotebookEdit)
 ModeBypass      // allow everything except explicit deny rules
 ModePlan        // read-only tools only
-ModeDontAsk     // never prompt — rules + read-only only
-ModeAuto        // like dontAsk, but a tool's own "allow" verdict is honored
+ModeDontAsk     // never prompt: anything stage 3 does not allow is denied
+ModeAuto        // never prompt; same outcome as dontAsk in Evaluate
 ```
+
+`dontAsk` and `auto` reach the same decisions: both honor allow rules, read-only
+tools and a tool's own `Allow` verdict (stage 3), and both deny whatever is left.
+They differ only in the denial message and in `harness.StricterMode`, which ranks
+`auto` as less strict when a subagent's mode is reconciled with its parent's.
 
 ## The four-stage pipeline
 
@@ -57,9 +62,23 @@ flowchart TD
 
 ## Rule matching
 
-Allow / deny rules are matched by `matchRule`: a bare tool name, `*` (any), or a
-`Name(...)` form whose `Name` part matches the tool. Rules live in
-`Options.AllowedTools` / `Options.DisallowedTools`.
+Rules live in `Options.AllowedTools` / `Options.DisallowedTools` and are matched in
+`permission/rules.go`. A rule is `*` (any tool), a bare tool name, or `Name(spec)`.
+The spec is matched against the call's *subject*: the first non-empty string among
+the input fields `command`, `file_path`, `notebook_path`, `path` and `url`
+(`permission.SubjectOf`), unless the host sets `Request.Subject`.
+
+- `Name()` or `Name(*)` matches every call of the tool.
+- `prefix:*` matches the prefix itself or the prefix followed by a space
+  (`Bash(git:*)` matches `git status`, not `gitk`).
+- A spec with `*` is a glob in which `*` also crosses `/` (`Read(/src/*)` covers the
+  whole tree).
+- Anything else must match exactly.
+
+Unclear cases fail safe. A spec on a call that has no subject never allows and always
+denies. A shell command that chains or substitutes commands (`;`, `&`, `|`, `$(`,
+backticks, redirects, newlines) never matches an allow spec, so `Bash(git:*)` does not
+allow `git status; rm -rf ~`; a deny spec matches if any command in the chain does.
 
 ## Where it plugs in
 
@@ -69,6 +88,8 @@ The harness calls `Evaluate` for every tool call inside `execOne`
 `tool_result` (`CodePermissionDenied`) — so a denied call never breaks the
 `tool_use`/`tool_result` pairing the provider requires.
 
-Plan mode (see the [subagents and plan sections of the architecture](../ARCHITECTURE.md))
+Plan mode (see [the architecture overview](../ARCHITECTURE.md#7-mcp-skills-memory-plan-mode-hooks))
 changes the active mode mid-loop through `QueryInput.PermissionModeFunc`, which the
-pipeline reads fresh on each call.
+harness reads fresh for each call. A subagent runs in the stricter of its own mode and
+its parent's, and inherits the parent's rules (see the
+[subagents guide](subagents.md)).
