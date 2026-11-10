@@ -8,8 +8,9 @@ model of the system before you change it, read [docs/ARCHITECTURE.md](docs/ARCHI
 
 Corvid is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma).
 
-- **`main`** is where fork development happens and holds the current API.
-  Base your branches on `main` and open pull requests against it.
+- **`dev`** is where fork development happens. Base your branches on `dev` and open
+  pull requests against it.
+- **`main`** is the stable line: `dev` is merged into it when a release is cut.
 - **`mirror`** tracks upstream's `main` unchanged; upstream fixes are ported from it
   selectively. Do not open pull requests against it.
 - Releases are tagged `v0.4.4-p.N`.

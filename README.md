@@ -12,7 +12,7 @@ You point it at any model (via the **Anthropic** or **OpenAI** wire format — i
 
 Module path: `github.com/0xmanhnv/corvid` · Go 1.26+ (per [`go.mod`](go.mod); the loop streams through `iter`, added in Go 1.23).
 
-This is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma) (v0.4.4). Development happens on `main` (released as `v0.4.4-p.N` tags); the `mirror` branch tracks upstream unchanged. See [Acknowledgements](#acknowledgements).
+This is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma) (v0.4.4). Development happens on `dev`; `main` is the stable line, released as `v0.4.4-p.N` tags; the `mirror` branch tracks upstream unchanged. See [Acknowledgements](#acknowledgements).
 
 Until November 2026 this fork was published as `github.com/0xmanhnv/norma`; the old URL redirects here, but Go imports must move to `github.com/0xmanhnv/corvid`.
 
@@ -121,7 +121,7 @@ Implements the core loop, dual providers, tools, the full permission pipeline, c
 
 ## Acknowledgements
 
-Corvid is a maintained fork of **[Autumn-27/norma](https://github.com/Autumn-27/norma)** by Autumn-27, the original author and copyright holder, released under the Apache License 2.0. This fork builds on that work; the upstream copyright notice is preserved in [`LICENSE`](LICENSE). Development of the fork happens on `main`; `mirror` tracks upstream.
+Corvid is a maintained fork of **[Autumn-27/norma](https://github.com/Autumn-27/norma)** by Autumn-27, the original author and copyright holder, released under the Apache License 2.0. This fork builds on that work; the upstream copyright notice is preserved in [`LICENSE`](LICENSE). Development of the fork happens on `dev`, `main` holds releases, and `mirror` tracks upstream.
 
 Corvid's archive-backed context-compression package (`fold` / `foldadapter`) uses code
 from **acp-kernel** by ranxianglei (<https://github.com/ranxianglei/acp-kernel>),
