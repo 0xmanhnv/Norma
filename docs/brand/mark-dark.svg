@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 96">
-  <polygon points="4,76 30,58 24,70" fill="#4F5863"/>
-  <polygon points="24,70 30,58 60,32 70,64" fill="#3A424C"/>
-  <polygon points="34,62 60,32 58,64" fill="#7C8692"/>
-  <polygon points="24,70 70,64 50,78" fill="#4F5863"/>
-  <polygon points="60,32 70,64 80,36" fill="#454D57"/>
-  <polygon points="60,32 72,12 80,36" fill="#3A424C"/>
+  <polygon points="4,76 30,58 24,70" fill="#6E7884"/>
+  <polygon points="24,70 30,58 60,32 70,64" fill="#5A636E"/>
+  <polygon points="34,62 60,32 58,64" fill="#9AA3AD"/>
+  <polygon points="24,70 70,64 50,78" fill="#6E7884"/>
+  <polygon points="60,32 70,64 80,36" fill="#646D78"/>
+  <polygon points="60,32 72,12 80,36" fill="#5A636E"/>
   <polygon points="72,12 97,24 80,36" fill="#22C4E8"/>
   <polygon points="72,12 97,24 82,22" fill="#B8F2FC" opacity="0.55"/>
   <circle cx="74" cy="24" r="2.3" fill="#E6EDF3"/>
-  <path d="M44 75 L42 90 M55 74 L57 90" stroke="#4F5863" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M44 75 L42 90 M55 74 L57 90" stroke="#6E7884" stroke-width="3.2" stroke-linecap="round"/>
 </svg>
