@@ -163,9 +163,11 @@ flowchart TD
     StreamCall --> Err{stream error?}
     Err -->|overflow, first time| React["Compactor.Reactive<br/>force one AutoCompact, retry"]
     React --> StreamCall
-    Err -->|other| ModelErr([finish: model_error])
+    Err -->|other| ModelErr(["keep the calls that ran<br/>finish: model_error"])
     Err -->|no| Append["append assistant message<br/>emit KindUsage"]
-    Append --> HasTools{tool calls?}
+    Append --> Refused{refusal?}
+    Refused -->|yes| RefusalEnd([finish: refusal])
+    Refused -->|no| HasTools{tool calls?}
 
     HasTools -->|no| MaxTok{max_tokens<br/>truncation?}
     MaxTok -->|yes| Escalate["escalate / resume-recovery"]
@@ -196,9 +198,14 @@ Key invariants, each enforced in `loop.run`:
   `toolCtx` deadline interrupts it, and the loop then enters the wrap-up phase on
   the live parent context rather than aborting.
 - **Termination is typed.** Every exit carries a `harness.TerminalReason`
-  (`completed`, `max_turns`, `timeout`, `model_error`, `prompt_too_long`,
+  (`completed`, `max_turns`, `timeout`, `model_error`, `refusal`, `prompt_too_long`,
   `aborted_streaming`, `aborted_tools`, `stop_hook_prevented`, `hook_stopped`,
-  `blocking_limit`, `image_error`) on the final `KindResult` event (`harness/event.go`).
+  `blocking_limit`, `image_error`) on the final `KindResult` event (`harness/event.go`),
+  along with the provider's stop reason for the last model turn.
+- **An incomplete tool call never runs.** A call still arriving when the stream
+  breaks is dropped; a call whose arguments were cut off by `max_tokens` is answered
+  with a `truncated` error. Calls that did run before a stream error stay in the
+  conversation and the transcript with their results.
 
 ### Continuation gates
 
@@ -491,9 +498,15 @@ message as it is born, in order, so the log holds the full-fidelity history. Whe
 compaction inserts a boundary, the boundary marker, the summary and a second copy of
 the kept recent tail are recorded, plus a separate boundary record for observability;
 MicroCompact's tool-result clearing is never recorded. `Session.Resume(id)` reloads
-the log, rebuilds the message history and cumulative usage, and drops any trailing
-tool call whose result never landed (a crash mid-tool) so the provider never sees a
-dangling `tool_use`. Because the post-boundary working set is in the log, a resumed
+the log and rebuilds the message history and cumulative usage. A trailing tool call
+whose result never landed (a crash mid-tool) is kept and answered with a synthetic
+error result saying the call was interrupted and may have executed, so the model
+checks before repeating a side effect and the provider never sees a dangling
+`tool_use`; that result is appended to the log as well. Each append is a single
+write of the record and its newline, and `Store.SetSync` adds an fsync per append. A
+line that cannot be decoded — the last one, when a write was cut short — is skipped
+instead of failing the file: `Store.LoadReport` lists what was skipped, and `Resume`
+passes it to `Options.OnWarn`. Because the post-boundary working set is in the log, a resumed
 session continues from the compacted view instead of summarizing again. A rewind
 record (`transcript.Store.Rewind`) moves the conversation back to an earlier message
 without deleting anything from the file. Subagents write their own sidechain files
