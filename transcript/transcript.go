@@ -17,6 +17,13 @@
 // are not persisted. A separate Type=="boundary" record is written for
 // observability and is skipped during reconstruction.
 //
+// Each Append reaches the file as one write, record and newline together. A
+// write cut short by a crash leaves at most an incomplete final line, which
+// Load skips (LoadReport says so) and the next Append closes off with a
+// newline, so one torn record never costs the rest of the session.
+// Store.SetSync adds an fsync per append for hosts that need the transcript to
+// survive power loss.
+//
 // A Type=="rewind" record moves the conversation back to an earlier message
 // (Store.Rewind): reconstruction drops every message after RewindTo. Nothing
 // is deleted from the file, so the abandoned turns stay readable, and the next
@@ -25,11 +32,13 @@ package transcript
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -57,8 +66,9 @@ type Record struct {
 
 // Store is a directory of session transcripts.
 type Store struct {
-	dir string
-	mu  sync.Mutex // serializes appends across writers in this process
+	dir  string
+	mu   sync.Mutex // serializes appends across writers in this process
+	sync bool       // fsync after every append (SetSync)
 }
 
 // NewStore returns a Store rooted at dir (created lazily on first write).
@@ -74,8 +84,35 @@ func (s *Store) AgentPath(sessionID, agentID string) string {
 	return filepath.Join(s.dir, sessionID, "subagents", "agent-"+agentID+".jsonl")
 }
 
+// SetSync makes every Append flush the file to stable storage (fsync) before
+// it returns. Off by default: an append then survives the process being killed
+// but not necessarily the machine losing power. Turn it on when a transcript
+// must survive that too; each append then costs one fsync. Set it before the
+// store is used.
+func (s *Store) SetSync(on bool) { s.sync = on }
+
+// appendFile is what Append needs from the transcript file. It is a seam for
+// tests; production code always gets an *os.File.
+type appendFile interface {
+	io.Writer
+	io.ReaderAt
+	Stat() (os.FileInfo, error)
+	Sync() error
+	Close() error
+}
+
+var openAppend = func(path string) (appendFile, error) {
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o644)
+}
+
 // Append writes records to path as JSONL, creating parent directories. It is
 // safe for concurrent use within the process.
+//
+// All the records and their newlines go to the file in a single write, so a
+// record is never on disk without its line ending because the process died
+// between two writes. If the file does not end in a newline (an earlier write
+// was cut short), a newline is written first, so the new records start on a
+// line of their own instead of being glued to the torn one.
 func (s *Store) Append(path string, recs ...Record) error {
 	if len(recs) == 0 {
 		return nil
@@ -85,53 +122,130 @@ func (s *Store) Append(path string, recs ...Record) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := openAppend(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	w := bufio.NewWriter(f)
+	var buf bytes.Buffer
+	if st, err := f.Stat(); err == nil && st.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], st.Size()-1); err == nil && last[0] != '\n' {
+			buf.WriteByte('\n')
+		}
+	}
 	for _, r := range recs {
 		b, err := json.Marshal(r)
 		if err != nil {
+			f.Close()
 			return err
 		}
-		if _, err := w.Write(b); err != nil {
-			return err
-		}
-		if err := w.WriteByte('\n'); err != nil {
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		f.Close()
+		return err
+	}
+	if s.sync {
+		if err := f.Sync(); err != nil {
+			f.Close()
 			return err
 		}
 	}
-	return w.Flush()
+	return f.Close()
+}
+
+// Skipped describes one line of a transcript file that could not be read and
+// was left out of the loaded records.
+type Skipped struct {
+	Line  int  // 1-based line number in the file
+	Bytes int  // length of the line
+	Final bool // the last line of the file, with no newline after it: a write that was cut short
+	Err   error
+}
+
+func (k Skipped) String() string {
+	what := "corrupt line"
+	if k.Final {
+		what = "incomplete final line"
+	}
+	return fmt.Sprintf("transcript: skipped %s %d (%d bytes): %v", what, k.Line, k.Bytes, k.Err)
 }
 
 // Load reads all records from a transcript file. A missing file yields no
-// records and no error (a fresh session).
+// records and no error (a fresh session). A line that cannot be decoded — in
+// practice the final line of a file whose last write was cut short — is
+// skipped rather than failing the whole file; use LoadReport to learn which
+// lines were skipped.
 func (s *Store) Load(path string) ([]Record, error) {
+	recs, _, err := s.LoadReport(path)
+	return recs, err
+}
+
+// LoadReport is Load that also returns the lines it skipped, in file order, so
+// a caller can warn about them or refuse a damaged transcript. A line holding
+// several complete records back to back (written before Append kept every
+// record on its own line) is read in full and not reported.
+func (s *Store) LoadReport(path string) ([]Record, []Skipped, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 	var recs []Record
+	var skipped []Skipped
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024) // tolerate large tool results
+	var read int64
+	n := 0
 	for sc.Scan() {
+		n++
 		line := sc.Bytes()
-		if len(line) == 0 {
+		read += int64(len(line)) + 1
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		var r Record
-		if err := json.Unmarshal(line, &r); err != nil {
-			return nil, fmt.Errorf("transcript: corrupt line: %w", err)
+		got, err := decodeLine(line)
+		if err != nil {
+			skipped = append(skipped, Skipped{Line: n, Bytes: len(line), Err: err})
+			continue
 		}
-		recs = append(recs, r)
+		recs = append(recs, got...)
 	}
-	return recs, sc.Err()
+	if err := sc.Err(); err != nil {
+		return recs, skipped, err
+	}
+	// The scanner strips line endings, so a last line with none shows up as
+	// the bytes read running one past the file size.
+	if len(skipped) > 0 && skipped[len(skipped)-1].Line == n {
+		if st, err := f.Stat(); err == nil && read > st.Size() {
+			skipped[len(skipped)-1].Final = true
+		}
+	}
+	return recs, skipped, nil
+}
+
+// decodeLine decodes the record on a line, or the records when several sit on
+// it back to back. Any undecodable part fails the whole line.
+func decodeLine(line []byte) ([]Record, error) {
+	dec := json.NewDecoder(bytes.NewReader(line))
+	var out []Record
+	for {
+		var r Record
+		if err := dec.Decode(&r); err != nil {
+			if errors.Is(err, io.EOF) && len(out) > 0 {
+				return out, nil
+			}
+			if errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+		out = append(out, r)
+	}
 }
 
 // Messages reconstructs the raw conversation and cumulative usage from records.
