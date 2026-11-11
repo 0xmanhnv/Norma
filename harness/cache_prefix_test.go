@@ -163,7 +163,9 @@ func bulkTool(name string, size int) tool.CoreTool {
 
 func runLoop(t *testing.T, in QueryInput) *Terminal {
 	t.Helper()
-	in.Messages = []llm.Message{llm.UserText("work through the keys")}
+	if in.Messages == nil {
+		in.Messages = []llm.Message{llm.UserText("work through the keys")}
+	}
 	in.System = []string{"You are a careful agent.", "Session notes: none."}
 	in.DynamicBoundary = 1
 	in.PermissionMode = permission.ModeBypass
@@ -283,6 +285,55 @@ func TestSummaryCallSharesTheRunsPrefix(t *testing.T) {
 	if term.Usage.InputTokens != allInput {
 		t.Fatalf("run usage counts %d input tokens; turns sent %d and summaries %d more",
 			term.Usage.InputTokens, turnInput, allInput-turnInput)
+	}
+}
+
+// MicroCompact clears old tool results in batches. Each batch rewrites the
+// history once, so the prefix breaks once per batch — not on every turn above
+// the threshold, which is what clearing one result per turn used to do — and
+// between batches the requests extend each other byte for byte.
+func TestMicroCompactBreaksThePrefixOncePerBatch(t *testing.T) {
+	const turns = 60
+	f := newFakeAnthropic(t, tool.ReadName, turns) // a tool whose results MicroCompact clears
+	runLoop(t, QueryInput{
+		Provider: f.provider(t),
+		Tools:    tool.NewRegistry(bulkTool(tool.ReadName, 4000)),
+		// A large brief keeps the run above the MicroCompact threshold (115200
+		// tokens of a 200000 window) from the first turn to the last, whatever
+		// is cleared: the situation in which one result used to be cleared on
+		// every turn. A pass must now free 19200 tokens. No summarizer, so
+		// only MicroCompact edits history.
+		Messages:  []llm.Message{llm.UserText("brief: " + strings.Repeat("background ", 44_000))},
+		Compactor: compaction.New(compaction.Config{ContextWindow: 200_000}, nil),
+	})
+	reqs := f.requests()
+	const cleared = "[Old tool result content cleared]"
+	var batches []int
+	prev := 0
+	for i, r := range reqs {
+		n := bytes.Count(r.Messages, []byte(cleared))
+		if n < prev {
+			t.Fatalf("request %d: a cleared result came back (%d → %d)", i, prev, n)
+		}
+		if n > prev {
+			batches = append(batches, i)
+			if n-prev < 4 {
+				t.Fatalf("request %d: a pass cleared only %d results; passes must be batches", i, n-prev)
+			}
+		}
+		prev = n
+	}
+	if len(batches) < 2 {
+		t.Fatalf("%d MicroCompact passes in %d turns; the test needs at least two", len(batches), turns)
+	}
+	if breaks := prefixBreaks(reqs); fmt.Sprint(breaks) != fmt.Sprint(batches) {
+		t.Fatalf("prefix broke at requests %v, MicroCompact passes ran at %v: each pass must break it exactly once and nothing else may", breaks, batches)
+	}
+	// Clearing kept every call paired with a result: a request with an
+	// unpaired block would have been rejected by a real endpoint.
+	last := reqs[len(reqs)-1].Messages
+	if u, r := bytes.Count(last, []byte(`"type":"tool_use"`)), bytes.Count(last, []byte(`"type":"tool_result"`)); u != r || u != turns {
+		t.Fatalf("%d tool_use and %d tool_result blocks after %d turns", u, r, turns)
 	}
 }
 

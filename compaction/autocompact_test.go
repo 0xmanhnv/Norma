@@ -201,7 +201,9 @@ func TestPreAutoViaLastInputTokensNoMicro(t *testing.T) {
 func TestPreMicroOnlyBand(t *testing.T) {
 	rs := &recSummarizer{}
 	// eff=96000, micro=57600, auto=83000, growth=19000 → predictive at tok>77000.
-	c := New(Config{ContextWindow: 100000, MaxOutputTokens: 4000, KeepRecent: 2}, rs.fn)
+	// MicroMinFree < 0: clear whatever can be cleared (batching is covered in
+	// micro_batch_test.go).
+	c := New(Config{ContextWindow: 100000, MaxOutputTokens: 4000, KeepRecent: 2, MicroMinFree: -1}, rs.fn)
 	msgs := manyReadPairs(microKeepRecent + 1) // small real size, one clearable
 	out := c.Pre(context.Background(), msgs, 60000)
 	if rs.calls != 0 || boundaryCount(out) != 0 {

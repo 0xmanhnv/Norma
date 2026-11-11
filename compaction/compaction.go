@@ -3,7 +3,9 @@
 //
 //   - MicroCompact — clear stale COMPACTABLE tool-result bodies (non-destructive:
 //     the result can be re-read). Keeps the most recent N compactable results and
-//     clears the rest.
+//     clears the rest, in batches: a pass runs only when it frees enough to be
+//     worth rewriting the cached prompt prefix, and the history is left
+//     byte-stable between passes.
 //   - AutoCompact  — summarize the working head behind a compact boundary at the
 //     token threshold (or predictively). Non-destructive: the full history is
 //     retained in the message array; only messages after the last boundary are
@@ -54,6 +56,15 @@ type Config struct {
 	// cool-down. Default five minutes; negative keeps the breaker open for the
 	// rest of the session.
 	BreakerCooldown time.Duration
+	// MicroMinFree is the least a MicroCompact pass must free, in tokens, to
+	// run. Clearing a tool result rewrites the conversation from that point
+	// on, so every request after it pays to write the prompt cache again; a
+	// pass that frees one result is not worth that. Old results are therefore
+	// left alone until clearing them all frees at least this much, then
+	// cleared in one pass, and the history stays byte-identical until the next
+	// one. Default: a tenth of the effective window. Negative clears as soon
+	// as anything can be (one result per turn, as before).
+	MicroMinFree int
 	// Summarizer, when set, replaces the summarizer passed to New. It is how a
 	// host that builds its session through agentcore.Options.Compaction picks
 	// its own: StandaloneSummarizer(cheapProvider, ...) summarizes with a
@@ -243,6 +254,23 @@ func (c *Compactor) buffer() int {
 func (c *Compactor) autoThreshold() int  { return c.effectiveWindow() - c.buffer() }
 func (c *Compactor) microThreshold() int { return c.effectiveWindow() * 6 / 10 }
 
+// microMinFree is the least a MicroCompact pass must free to be worth breaking
+// the cached prefix (see Config.MicroMinFree).
+func (c *Compactor) microMinFree() int {
+	switch m := c.cfg.MicroMinFree; {
+	case m > 0:
+		return m
+	case m < 0:
+		return 1
+	}
+	return max(c.effectiveWindow()/10, 1)
+}
+
+// summaryDue reports whether a context of tok tokens calls for AutoCompact.
+func (c *Compactor) summaryDue(tok int) bool {
+	return tok >= c.autoThreshold() || c.predictiveOver(tok)
+}
+
 // maxTurnGrowth == claude-code estimateMaxTurnGrowth: min(maxOutput,20000)+15000.
 func (c *Compactor) maxTurnGrowth() int { return c.reservedForSummary() + toolResultGrowthGuess }
 func (c *Compactor) predictiveOver(tok int) bool {
@@ -301,6 +329,18 @@ func blockChars(b llm.ContentBlock) int {
 // tool results, then AutoCompact at the threshold (or predictively). Both are
 // non-destructive. lastInputTokens is the previous response's total token size
 // (0 if none yet), used as the initial gate count.
+//
+// Most calls return msgs untouched, and that is the point: a provider's prompt
+// cache matches the request prefix byte for byte, so every edit to an earlier
+// message makes the next request pay for everything after it again. Pre edits
+// the history only in passes large enough to be worth that:
+//
+//   - below the micro threshold: nothing;
+//   - above it, with no summary due: one MicroCompact pass once the old tool
+//     results add up to MicroMinFree, nothing until then;
+//   - with a summary due: the MicroCompact pass instead, if it is large enough
+//     and gets the context back under the summary threshold; otherwise the
+//     summary, made over the still-unedited history so that it reads the cache.
 func (c *Compactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens int) []llm.Message {
 	if c.cfg.ContextWindow <= 0 {
 		return msgs
@@ -309,15 +349,28 @@ func (c *Compactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens
 	if tok <= c.microThreshold() {
 		return msgs
 	}
-	// MicroCompact: clear old COMPACTABLE tool results (non-destructive). Only
-	// re-estimate when it actually changed the array; otherwise the gate count
-	// (which prefers the accurate last-response size) still holds.
-	if out, changed := c.microCompact(msgs); changed {
-		msgs = out
-		tok = c.count(msgs, 0)
+	freed := c.microFreeable(msgs)
+	due := c.summaryDue(tok)
+	switch {
+	case freed == 0:
+		// Nothing to clear.
+	case !due:
+		if freed >= c.microMinFree() {
+			msgs, _ = c.microCompact(msgs)
+		}
+		return msgs
+	case freed >= c.microMinFree() && !c.summaryDue(tok-freed):
+		// Clearing alone gets back under the threshold: no summary needed.
+		msgs, _ = c.microCompact(msgs)
+		return msgs
+	case c.summarize == nil || !c.breakerAllows():
+		// A summary is due and cannot be made. Clearing is the only relief
+		// left, whatever it frees: an overflow costs more than a cache write.
+		msgs, _ = c.microCompact(msgs)
+		return msgs
 	}
 	// AutoCompact: at the threshold, or predictively if the next turn would overflow.
-	if tok >= c.autoThreshold() || c.predictiveOver(tok) {
+	if due {
 		if out, ok := c.autoCompact(ctx, msgs, tok, "auto"); ok {
 			msgs = out
 		}
@@ -385,11 +438,10 @@ func lastNNonMarkerStart(msgs []llm.Message, keep int) int {
 
 // --- MicroCompact: keep the most recent N compactable results, clear the rest ---
 
-// microCompact clears the bodies of all COMPACTABLE tool results except the most
-// recent microKeepRecent, returning the (possibly new) message slice and whether
-// anything changed. It is non-destructive: a cleared result can be re-read.
-func (c *Compactor) microCompact(msgs []llm.Message) ([]llm.Message, bool) {
-	// Collect compactable tool_use ids in encounter order.
+// microClearSet returns the tool_use ids whose results a MicroCompact pass
+// clears: every compactable call in the working set except the most recent
+// microKeepRecent. Nil when there are none.
+func microClearSet(msgs []llm.Message) map[string]bool {
 	var ids []string
 	for _, m := range msgs {
 		for _, b := range m.Content {
@@ -399,11 +451,47 @@ func (c *Compactor) microCompact(msgs []llm.Message) ([]llm.Message, bool) {
 		}
 	}
 	if len(ids) <= microKeepRecent {
-		return msgs, false // nothing old enough to clear
+		return nil
 	}
 	clearSet := make(map[string]bool, len(ids)-microKeepRecent)
 	for _, id := range ids[:len(ids)-microKeepRecent] {
 		clearSet[id] = true
+	}
+	return clearSet
+}
+
+// microFreeable estimates how many tokens a MicroCompact pass over msgs would
+// free, on the same scale as count: the bodies it would clear, less the
+// placeholder left in their place. Only the working set (after the last
+// boundary) counts, since that is all that is sent.
+func (c *Compactor) microFreeable(msgs []llm.Message) int {
+	clearSet := microClearSet(msgs)
+	if clearSet == nil {
+		return 0
+	}
+	chars := 0
+	for _, m := range llm.MessagesAfterBoundary(msgs) {
+		for _, b := range m.Content {
+			if b.Type == llm.BlockToolResult && clearSet[b.ToolUseID] && !isCleared(b.Content) {
+				if n := blockChars(b) - len(microClearedMessage); n > 0 {
+					chars += n
+				}
+			}
+		}
+	}
+	return chars / 4 * 4 / 3
+}
+
+// microCompact is one MicroCompact pass: it clears the bodies of all COMPACTABLE
+// tool results except the most recent microKeepRecent, returning the (possibly
+// new) message slice and whether anything changed. Only a result's body is
+// replaced; the tool_use block and its tool_result stay paired. It is
+// non-destructive: a cleared result can be re-read. Pre decides when a pass is
+// worth running.
+func (c *Compactor) microCompact(msgs []llm.Message) ([]llm.Message, bool) {
+	clearSet := microClearSet(msgs)
+	if clearSet == nil {
+		return msgs, false // nothing old enough to clear
 	}
 	changed := false
 	out := append([]llm.Message(nil), msgs...)
