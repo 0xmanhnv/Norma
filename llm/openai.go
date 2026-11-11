@@ -246,11 +246,11 @@ func flattenText(blocks []ContentBlock) string {
 }
 
 func (p *openaiProvider) buildBody(req CompletionRequest, stream bool) ([]byte, error) {
-	// A non-empty per-request override (req.Thinking) wins over Config.ThinkingType.
-	thinkingType := p.cfg.ThinkingType
-	if req.Thinking != "" {
-		thinkingType = req.Thinking
-	}
+	// A non-empty per-request override (req.Thinking) wins over
+	// Config.ThinkingType, except that a "disabled" the endpoint never asked
+	// for is left out (thinkingField): many OpenAI-compatible endpoints reject
+	// a body field they do not know.
+	thinkingType := p.cfg.thinkingField(req)
 	// The request is in thinking mode when either a thinking type is set (a
 	// `thinking` body field goes out) or a reasoning effort is configured — the
 	// same providers that then demand reasoning_content be echoed back.

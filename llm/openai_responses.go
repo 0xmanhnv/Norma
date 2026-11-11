@@ -72,7 +72,7 @@ func (p *openaiResponsesProvider) buildBody(req CompletionRequest, stream bool) 
 		Store:           false, // stateless: full history sent each call
 	}
 	// reasoning.effort is the Responses equivalent of reasoning_effort. A
-	// per-request "disabled" (compaction's summary call) suppresses it; otherwise
+	// per-request "disabled" suppresses it; otherwise
 	// send it only when configured.
 	if effort := p.cfg.effort(req); req.Thinking != "disabled" && effort != "" {
 		body.Reasoning = &orReasoning{Effort: effort}

@@ -55,14 +55,15 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 		maxTok = 8192
 	}
 	// Effective thinking mode: a non-empty per-request override (req.Thinking)
-	// wins over Config.ThinkingType. Thinking-type content blocks may be replayed
-	// only when thinking is actively "enabled"; any other mode (incl. "disabled")
-	// strips them so Anthropic does not reject the request.
-	thinkingType := p.cfg.ThinkingType
-	thinkingEnabled := thinkingType != ""
+	// wins over Config.ThinkingType. Thinking-type content blocks are replayed
+	// only when thinking is on; with it off (no mode, or "disabled") they are
+	// stripped so Anthropic does not reject the request. What goes on the wire
+	// is decided separately (thinkingField): a "disabled" the endpoint never
+	// asked for is left out rather than sent.
+	thinkingType := p.cfg.thinkingField(req)
+	thinkingEnabled := p.cfg.ThinkingType != ""
 	if req.Thinking != "" {
-		thinkingType = req.Thinking
-		thinkingEnabled = req.Thinking == "enabled"
+		thinkingEnabled = req.Thinking != "disabled"
 	}
 	cache := !req.DisableCache
 	stableTTL, convTTL := cacheTTLs(req)

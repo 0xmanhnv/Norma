@@ -23,6 +23,7 @@ package compaction
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/0xmanhnv/corvid/llm"
 	"github.com/0xmanhnv/corvid/tool"
@@ -42,6 +43,12 @@ type Config struct {
 	// KeepRecent is the number of recent messages AutoCompact always preserves as
 	// the un-summarized tail (default 8). MicroCompact uses its own microKeepRecent.
 	KeepRecent int
+	// BreakerCooldown is how long AutoCompact stays off after its summarizer
+	// failed three times in a row. When it has passed, the next compaction is
+	// tried once: success closes the breaker, another failure starts a new
+	// cool-down. Default five minutes; negative keeps the breaker open for the
+	// rest of the session.
+	BreakerCooldown time.Duration
 }
 
 func (c *Config) defaults() {
@@ -53,6 +60,9 @@ func (c *Config) defaults() {
 	}
 	if c.KeepRecent == 0 {
 		c.KeepRecent = 8
+	}
+	if c.BreakerCooldown == 0 {
+		c.BreakerCooldown = defaultBreakerCooldown
 	}
 }
 
@@ -81,6 +91,12 @@ const (
 	microKeepRecent       = 5                                   // == claude-code KEEP_RECENT (compactable results kept)
 	toolResultGrowthGuess = 15000                               // == claude-code TOOL_RESULT_GROWTH_ESTIMATE
 	maxAutoCompactFails   = 3                                   // == claude-code MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
+
+	// defaultBreakerCooldown is how long a tripped breaker waits before letting
+	// one compaction through again. Long enough that a summarizer that is
+	// really broken is not hammered with a full-context request every turn,
+	// short enough that an outage does not cost the session its compaction.
+	defaultBreakerCooldown = 5 * time.Minute
 )
 
 // Compactor applies the strategy. Construct with New.
@@ -88,13 +104,55 @@ type Compactor struct {
 	cfg       Config
 	summarize Summarizer
 	failures  int
-	tripped   bool
+	// Circuit breaker over the summarizer. tripped is the open state; retryAt
+	// is when it turns half-open (zero: never). See breakerAllows.
+	tripped bool
+	retryAt time.Time
+	now     func() time.Time // the clock; replaced in tests
 }
 
 // New builds a Compactor. summarize may be nil to disable AutoCompact.
 func New(cfg Config, summarize Summarizer) *Compactor {
 	cfg.defaults()
-	return &Compactor{cfg: cfg, summarize: summarize}
+	return &Compactor{cfg: cfg, summarize: summarize, now: time.Now}
+}
+
+// --- circuit breaker ---
+
+// trip opens the breaker: AutoCompact is skipped until the cool-down passes.
+func (c *Compactor) trip() {
+	c.tripped = true
+	c.retryAt = time.Time{}
+	if c.cfg.BreakerCooldown > 0 {
+		c.retryAt = c.now().Add(c.cfg.BreakerCooldown)
+	}
+}
+
+// breakerAllows reports whether a summary may be attempted. A closed breaker
+// always allows it. An open one allows a single probe once its cool-down has
+// passed (half-open): summaryFailed re-opens it at the first failure,
+// summarySucceeded closes it.
+func (c *Compactor) breakerAllows() bool {
+	if !c.tripped {
+		return true
+	}
+	return !c.retryAt.IsZero() && !c.now().Before(c.retryAt)
+}
+
+// summaryFailed counts a summarizer failure. Three in a row open the breaker;
+// a failed half-open probe re-opens it straight away.
+func (c *Compactor) summaryFailed() {
+	c.failures++
+	if c.tripped || c.failures >= maxAutoCompactFails {
+		c.trip()
+	}
+}
+
+// summarySucceeded closes the breaker and forgets earlier failures.
+func (c *Compactor) summarySucceeded() {
+	c.failures = 0
+	c.tripped = false
+	c.retryAt = time.Time{}
 }
 
 // --- threshold math ---
@@ -316,7 +374,7 @@ func isCleared(blocks []llm.ContentBlock) bool {
 // --- AutoCompact: non-destructive boundary + summary ---
 
 func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok int, trigger string) ([]llm.Message, bool) {
-	if c.summarize == nil || c.tripped {
+	if c.summarize == nil || !c.breakerAllows() {
 		return msgs, false
 	}
 	start, tailStart := c.workingBounds(msgs)
@@ -329,13 +387,14 @@ func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok 
 	}
 	summary, err := c.summarize(ctx, toSummarize)
 	if err != nil {
-		c.failures++
-		if c.failures >= maxAutoCompactFails {
-			c.tripped = true
+		// A cancelled run is not a summarizer failure: counting it would open
+		// the breaker on a session that was merely interrupted.
+		if ctx.Err() == nil {
+			c.summaryFailed()
 		}
 		return msgs, false
 	}
-	c.failures = 0
+	c.summarySucceeded()
 
 	// Skill instructions in the summarized head are lossy in the prose summary, so
 	// re-inject the latest invocation of each skill verbatim just after the summary

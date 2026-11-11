@@ -53,7 +53,7 @@ func TestAutoCompactNilSummarizer(t *testing.T) {
 func TestAutoCompactTrippedBreaker(t *testing.T) {
 	rs := &recSummarizer{}
 	c := New(smallWindow(), rs.fn)
-	c.tripped = true
+	c.trip()
 	msgs := []llm.Message{bigMsg(llm.RoleUser, 4000), bigMsg(llm.RoleUser, 4000), bigMsg(llm.RoleUser, 4000)}
 	if _, ok := c.autoCompact(context.Background(), msgs, 100, "auto"); ok {
 		t.Fatal("tripped breaker → autoCompact must not run")
@@ -246,7 +246,7 @@ func TestPreNonDestructive(t *testing.T) {
 func TestReactiveTripped(t *testing.T) {
 	rs := &recSummarizer{}
 	c := New(smallWindow(), rs.fn)
-	c.tripped = true
+	c.trip()
 	msgs := []llm.Message{bigMsg(llm.RoleUser, 4000), bigMsg(llm.RoleUser, 4000), bigMsg(llm.RoleUser, 4000)}
 	if _, ok := c.Reactive(context.Background(), msgs); ok {
 		t.Fatal("tripped → reactive cannot compact")

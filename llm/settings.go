@@ -59,6 +59,23 @@ func SettingsOf(req CompletionRequest) ModelSettings {
 	}
 }
 
+// thinkingField is the thinking type an adapter puts on the wire for req, ""
+// for none. A request that asks for "disabled" against a provider configured
+// with no thinking type gets no field at all: that endpoint was never told it
+// takes one, several OpenAI-compatible gateways reject it, and newer Claude
+// models reject "disabled" outright. Leaving the field out is the portable way
+// to not ask for thinking.
+func (c Config) thinkingField(req CompletionRequest) string {
+	switch {
+	case req.Thinking == "":
+		return c.ThinkingType
+	case req.Thinking == "disabled" && c.ThinkingType == "":
+		return ""
+	default:
+		return req.Thinking
+	}
+}
+
 // cacheTTLs resolves the lifetimes of the stable and the conversation
 // breakpoints of req: "" (provider default), "5m" or "1h". Unknown values are
 // dropped. One hour on the conversation forces one hour on the stable prefix,

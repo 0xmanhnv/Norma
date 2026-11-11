@@ -112,3 +112,55 @@ func TestOpenAIPerRequestThinkingOverride(t *testing.T) {
 		t.Fatalf("empty override should inherit config, got %q", thinkingType(m2))
 	}
 }
+
+// A "disabled" the endpoint never asked for is left off the wire. The provider
+// here has no ThinkingType, so nothing has said this endpoint takes a thinking
+// field: several OpenAI-compatible gateways reject the unknown key, and newer
+// Claude models reject "disabled" itself. Compaction's summary used to send it
+// to every endpoint, and three rejections turned compaction off.
+func TestThinkingDisabledIsOmittedWhenEndpointNeverAskedForIt(t *testing.T) {
+	oaStub := sse(`data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}`, ``, `data: [DONE]`, ``)
+	anStub := sse(`event: message_stop`, `data: {"type":"message_stop"}`, ``)
+	req := CompletionRequest{Thinking: "disabled", Messages: []Message{
+		UserText("hi"),
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: BlockThinking, Thinking: "SECRET_THOUGHT", Signature: "s"}, TextBlock("a")}},
+		UserText("again"),
+	}}
+	for _, f := range []Format{FormatOpenAI, FormatAnthropic} {
+		stub := oaStub
+		if f == FormatAnthropic {
+			stub = anStub
+		}
+		raw, m := captureReq(t, Config{Format: f}, req, stub)
+		if _, ok := m["thinking"]; ok {
+			t.Fatalf("%s: a thinking field was sent to an endpoint that never asked for one: %s", f, raw)
+		}
+		if f == FormatAnthropic && strings.Contains(raw, "SECRET_THOUGHT") {
+			t.Fatalf("%s: thinking blocks must still be stripped when thinking is off: %s", f, raw)
+		}
+	}
+	// A provider configured with a thinking type has told us the endpoint takes
+	// the field, so the override is sent.
+	_, m := captureReq(t, Config{Format: FormatAnthropic, ThinkingType: "enabled"}, req, anStub)
+	if thinkingType(m) != "disabled" {
+		t.Fatalf("configured endpoint: thinking=%q, want disabled", thinkingType(m))
+	}
+}
+
+// Any other mode is sent as asked, and counts as thinking on: its blocks are
+// replayed. ("adaptive" used to be treated as off and had its history stripped.)
+func TestThinkingAdaptiveIsSentAndKeepsBlocks(t *testing.T) {
+	stub := sse(`event: message_stop`, `data: {"type":"message_stop"}`, ``)
+	req := CompletionRequest{Thinking: "adaptive", Messages: []Message{
+		UserText("hi"),
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: BlockThinking, Thinking: "KEPT_THOUGHT", Signature: "s"}, TextBlock("a")}},
+		UserText("again"),
+	}}
+	raw, m := captureReq(t, Config{Format: FormatAnthropic}, req, stub)
+	if thinkingType(m) != "adaptive" {
+		t.Fatalf("thinking=%q, want adaptive", thinkingType(m))
+	}
+	if !strings.Contains(raw, "KEPT_THOUGHT") {
+		t.Fatalf("thinking blocks dropped with thinking on: %s", raw)
+	}
+}

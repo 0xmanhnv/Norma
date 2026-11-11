@@ -110,7 +110,9 @@ type Config struct {
 
 	// ThinkingType toggles extended/reasoning mode via the request's
 	// "thinking":{"type":...} field, for both formats. "" omits it (provider
-	// default); "enabled"/"disabled" are sent verbatim.
+	// default); any other value ("enabled", "disabled", "adaptive") is sent
+	// verbatim. Setting it also tells the adapters this endpoint takes the
+	// field: with it empty, a per-request "disabled" is not sent at all.
 	ThinkingType string
 	// ReasoningEffort sets the reasoning strength. "" omits it. For OpenAI it maps
 	// to "reasoning_effort"; for Anthropic to "output_config":{"effort":...}.

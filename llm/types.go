@@ -244,9 +244,9 @@ type CompletionRequest struct {
 	Temperature *float64
 	Stop        []string
 	// Thinking overrides the provider's thinking mode for THIS request only:
-	// "" inherits Config.ThinkingType; "enabled"/"disabled" force that mode.
-	// Compaction's summary call sets "disabled" so the summarizer never spends
-	// tokens on reasoning and never replays thinking blocks (which Anthropic
-	// rejects when thinking is off).
+	// "" inherits Config.ThinkingType; any other value is that mode. An adapter
+	// only puts a thinking field on the wire when the endpoint is known to take
+	// one: "disabled" against a provider configured with no ThinkingType sends
+	// nothing, which is how such an endpoint is asked not to think.
 	Thinking string
 }
