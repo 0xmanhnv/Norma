@@ -9,20 +9,20 @@ import (
 	"time"
 )
 
-// An unset Config keeps the historical defaults: 3 establishment retries on the
-// exponential ladder, 2 empty-response retries on the same ladder.
-func TestRetryDefaultsUnchanged(t *testing.T) {
+// An unset Config: 5 establishment retries on the exponential ladder, 2
+// empty-response retries on the same ladder, every wait capped at a minute.
+func TestRetryDefaults(t *testing.T) {
 	var c Config
-	if got := c.retries(); got != 3 {
-		t.Fatalf("retries=%d, want 3", got)
+	if got := c.retries(); got != 5 {
+		t.Fatalf("retries=%d, want 5", got)
 	}
 	if got := c.emptyRetries(); got != emptyResponseRetries {
 		t.Fatalf("emptyRetries=%d, want %d", got, emptyResponseRetries)
 	}
-	for attempt, want := range []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second, 8 * time.Second} {
+	for attempt, want := range []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second, time.Minute} {
 		a := attempt
 		if a == 3 {
-			a = 5 // past the cap
+			a = 40 // past the cap
 		}
 		if got := c.retryDelay(a); got != want {
 			t.Fatalf("retryDelay(%d)=%v, want %v", a, got, want)
