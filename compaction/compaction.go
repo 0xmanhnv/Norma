@@ -60,9 +60,22 @@ type Config struct {
 	// BreakerCooldown is how long AutoCompact stays off after its summarizer
 	// failed three times in a row. When it has passed, the next compaction is
 	// tried once: success closes the breaker, another failure starts a new
-	// cool-down. Default five minutes; negative keeps the breaker open for the
-	// rest of the session.
+	// cool-down. Default five minutes; negative turns the cool-down off
+	// (with BreakerRegrowth negative too, the breaker then stays open for the
+	// rest of the session).
 	BreakerCooldown time.Duration
+	// BreakerRegrowth is the other way a tripped breaker turns half-open: the
+	// conversation has grown by this many tokens since it tripped. A summary
+	// that failed on one conversation may well work on a longer, different
+	// one, and by then the need is greater. Default: a tenth of the effective
+	// window; negative leaves the cool-down as the only way back.
+	BreakerRegrowth int
+	// OnEvent, when set, is called for every compaction pass and for every
+	// pass that was due and did not happen, with the reason (see Event). Both
+	// the passes Pre makes on its own and the ones Reactive is asked for go
+	// through it, so a host can record each one, with tokens before and
+	// after. It is called on the goroutine that called Pre or Reactive.
+	OnEvent func(Event)
 	// MicroMinFree is the least a MicroCompact pass must free, in tokens, to
 	// run. Clearing a tool result rewrites the conversation from that point
 	// on, so every request after it pays to write the prompt cache again; a
@@ -140,8 +153,17 @@ type Compactor struct {
 	tripped bool
 	retryAt time.Time
 	now     func() time.Time // the clock; replaced in tests
-	// lastReason is why the most recent autoCompact did nothing ("" if it ran).
+	// lastReason is why the most recent autoCompact did nothing ("" if it ran),
+	// lastErr the summarizer error behind it, if any.
 	lastReason Reason
+	lastErr    error
+	// viewTokens is the local estimate of the view autoCompact last looked at;
+	// trippedAt is that estimate at the moment the breaker opened.
+	viewTokens int
+	trippedAt  int
+	// rejected is set when Pre's summary was thrown away for not shrinking the
+	// view, so that a Reactive call in the same turn does not pay for another.
+	rejected bool
 
 	// mu guards prefix and usage, which the loop's goroutine and a host
 	// reading TakeUsage may touch from different goroutines.
@@ -200,9 +222,11 @@ func (c *Compactor) summaryCall(msgs, head []llm.Message, overflowed bool) *Summ
 
 // --- circuit breaker ---
 
-// trip opens the breaker: AutoCompact is skipped until the cool-down passes.
+// trip opens the breaker: AutoCompact is skipped until the cool-down passes or
+// the conversation has grown by BreakerRegrowth.
 func (c *Compactor) trip() {
 	c.tripped = true
+	c.trippedAt = c.viewTokens
 	c.retryAt = time.Time{}
 	if c.cfg.BreakerCooldown > 0 {
 		c.retryAt = c.now().Add(c.cfg.BreakerCooldown)
@@ -210,14 +234,31 @@ func (c *Compactor) trip() {
 }
 
 // breakerAllows reports whether a summary may be attempted. A closed breaker
-// always allows it. An open one allows a single probe once its cool-down has
-// passed (half-open): summaryFailed re-opens it at the first failure,
+// always allows it. An open one allows a single probe (half-open) once its
+// cool-down has passed, or once the conversation has grown by BreakerRegrowth
+// tokens since it opened: summaryFailed re-opens it at the first failure,
 // summarySucceeded closes it.
 func (c *Compactor) breakerAllows() bool {
 	if !c.tripped {
 		return true
 	}
-	return !c.retryAt.IsZero() && !c.now().Before(c.retryAt)
+	if !c.retryAt.IsZero() && !c.now().Before(c.retryAt) {
+		return true
+	}
+	if g := c.breakerRegrowth(); g > 0 && c.viewTokens >= c.trippedAt+g {
+		return true
+	}
+	return false
+}
+
+func (c *Compactor) breakerRegrowth() int {
+	switch g := c.cfg.BreakerRegrowth; {
+	case g > 0:
+		return g
+	case g < 0:
+		return 0
+	}
+	return max(c.effectiveWindow()/10, 1)
 }
 
 // summaryFailed counts a summarizer failure. Three in a row open the breaker;
@@ -354,48 +395,102 @@ func (c *Compactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens
 	if c.cfg.ContextWindow <= 0 {
 		return msgs
 	}
+	c.rejected = false // a new turn
 	tok := c.count(msgs, lastInputTokens)
 	if tok <= c.microThreshold() {
 		return msgs
 	}
 	freed := c.microFreeable(msgs)
 	due := c.summaryDue(tok)
+	c.viewTokens = c.estimate(llm.MessagesForAPI(msgs))
 	switch {
 	case freed == 0:
 		// Nothing to clear.
 	case !due:
 		if freed >= c.microMinFree() {
-			msgs, _ = c.microCompact(msgs)
+			msgs = c.microPass(msgs, tok, freed)
 		}
 		return msgs
 	case freed >= c.microMinFree() && !c.summaryDue(tok-freed):
 		// Clearing alone gets back under the threshold: no summary needed.
-		msgs, _ = c.microCompact(msgs)
-		return msgs
+		return c.microPass(msgs, tok, freed)
 	case c.summarize == nil || !c.breakerAllows():
 		// A summary is due and cannot be made. Clearing is the only relief
 		// left, whatever it frees: an overflow costs more than a cache write.
-		msgs, _ = c.microCompact(msgs)
-		return msgs
+		c.summaryPass(ctx, msgs, tok, "auto") // reports why no summary is made
+		return c.microPass(msgs, tok, freed)
 	}
 	// AutoCompact: at the threshold, or predictively if the next turn would overflow.
 	if due {
-		if out, ok := c.autoCompact(ctx, msgs, tok, "auto"); ok {
-			msgs = out
-		}
+		msgs, _ = c.summaryPass(ctx, msgs, tok, "auto")
 	}
 	return msgs
+}
+
+// microPass runs one MicroCompact pass and reports it.
+func (c *Compactor) microPass(msgs []llm.Message, tok, freed int) []llm.Message {
+	before := clearedResults(msgs)
+	out, changed := c.microCompact(msgs)
+	if changed {
+		c.emit(Event{Kind: KindMicro, Trigger: "auto", Applied: true,
+			TokensBefore: tok, TokensAfter: max(tok-freed, 0), ResultsCleared: clearedResults(out) - before})
+	}
+	return out
+}
+
+// summaryPass runs autoCompact and reports the outcome: a pass with its token
+// counts, or the reason nothing happened.
+func (c *Compactor) summaryPass(ctx context.Context, msgs []llm.Message, tok int, trigger string) ([]llm.Message, bool) {
+	out, ok := c.autoCompact(ctx, msgs, tok, trigger)
+	ev := Event{Kind: KindSummary, Trigger: trigger, Applied: ok, TokensBefore: tok, TokensAfter: tok}
+	if ok {
+		// The saving is measured locally and taken off the count we came in
+		// with, which is the provider's own when it reported one.
+		saved := c.estimate(llm.MessagesForAPI(msgs)) - c.estimate(llm.MessagesForAPI(out))
+		ev.TokensAfter = max(tok-saved, 0)
+		if meta, found := llm.ParseBoundaryMeta(out[llm.LastBoundaryIndex(out)]); found {
+			ev.MessagesSummarized = meta.MessagesSummarized
+		}
+	} else {
+		ev.Reason, ev.Err = c.lastReason, c.lastErr
+	}
+	c.emit(ev)
+	return out, ok
+}
+
+func (c *Compactor) emit(ev Event) {
+	if c.cfg.OnEvent != nil {
+		c.cfg.OnEvent(ev)
+	}
+}
+
+// clearedResults counts the tool results MicroCompact has cleared in msgs.
+func clearedResults(msgs []llm.Message) int {
+	n := 0
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type == llm.BlockToolResult && isCleared(b.Content) {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // Reactive force-compacts after a prompt-too-long error by running one
 // AutoCompact (mirrors claude-code tryReactiveCompact, which only summarizes —
 // no micro/collapse/snip cascade). Returns whether the API view shrank.
+//
+// When Pre has just thrown a summary away on this same turn for not making the
+// view smaller, Reactive does not ask for another: the same conversation would
+// get the same answer, at the price of a second model call.
 func (c *Compactor) Reactive(ctx context.Context, msgs []llm.Message) ([]llm.Message, bool) {
 	before := c.count(msgs, 0)
-	if out, ok := c.autoCompact(ctx, msgs, before, "reactive"); ok {
-		return out, c.count(out, 0) < before
+	if c.rejected {
+		c.emit(Event{Kind: KindSummary, Trigger: "reactive", Reason: ReasonSummaryRejected, TokensBefore: before, TokensAfter: before})
+		return msgs, false
 	}
-	return msgs, false
+	return c.summaryPass(ctx, msgs, before, "reactive")
 }
 
 // IsOverflow is the method form (satisfies the harness Compactor interface).
@@ -511,8 +606,14 @@ func isCleared(blocks []llm.ContentBlock) bool {
 
 // --- AutoCompact: non-destructive boundary + summary ---
 
+// autoCompact summarizes the head of the working set behind a new boundary. It
+// returns msgs unchanged and false when nothing was done; lastReason then says
+// why. A summary is only accepted if the view it leaves is smaller than the one
+// it replaces.
 func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok int, trigger string) ([]llm.Message, bool) {
-	c.lastReason = ""
+	c.lastReason, c.lastErr = "", nil
+	viewBefore := c.estimate(llm.MessagesForAPI(msgs))
+	c.viewTokens = viewBefore
 	switch {
 	case c.summarize == nil:
 		c.lastReason = ReasonNoSummarizer
@@ -535,12 +636,13 @@ func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok 
 	if err != nil {
 		// A cancelled run is not a summarizer failure: counting it would open
 		// the breaker on a session that was merely interrupted.
+		c.lastReason, c.lastErr = ReasonCancelled, err
 		if ctx.Err() == nil {
+			c.lastReason = ReasonSummaryFailed
 			c.summaryFailed()
 		}
 		return msgs, false
 	}
-	c.summarySucceeded()
 
 	// Skill instructions in the summarized head are lossy in the prose summary, so
 	// re-inject the latest invocation of each skill verbatim just after the summary
@@ -563,6 +665,19 @@ func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok 
 	out = append(out, boundary, summaryMsg)
 	out = append(out, reinjected...)
 	out = append(out, msgs[tailStart:]...)
+
+	// The point of a summary is a smaller view. One that is not (a summary as
+	// long as what it replaced, a head that was mostly skills re-injected
+	// verbatim) is thrown away: accepting it would add a boundary, lose the
+	// original wording and leave the context just as full, so the next turn
+	// would summarize again. It counts against the summarizer like a failure.
+	if c.estimate(llm.MessagesForAPI(out)) >= viewBefore {
+		c.lastReason = ReasonSummaryNotSmaller
+		c.rejected = true
+		c.summaryFailed()
+		return msgs, false
+	}
+	c.summarySucceeded()
 	return out, true
 }
 

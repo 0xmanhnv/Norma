@@ -79,6 +79,7 @@ func TestBreakerCooldownDisabled(t *testing.T) {
 	cfg.BreakerCooldown = -1
 	c := New(cfg, rs.fn)
 	c.now = func() time.Time { return clock }
+	c.cfg.BreakerRegrowth = -1 // only the cool-down reopens it here
 	c.trip()
 	clock = clock.Add(24 * time.Hour)
 	msgs := []llm.Message{bigMsg(llm.RoleUser, 4000), bigMsg(llm.RoleUser, 4000), bigMsg(llm.RoleUser, 4000)}

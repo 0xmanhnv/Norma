@@ -55,7 +55,7 @@ func TestDefaultsApplied(t *testing.T) {
 	// KeepRecent defaulted to 8: summarizing 10 messages preserves the last 8.
 	var msgs []llm.Message
 	for range 10 {
-		msgs = append(msgs, bigMsg(llm.RoleUser, 10))
+		msgs = append(msgs, bigMsg(llm.RoleUser, 400))
 	}
 	out, ok := c.autoCompact(context.Background(), msgs, 100, "auto")
 	if !ok {

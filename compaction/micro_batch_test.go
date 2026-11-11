@@ -149,6 +149,7 @@ func TestMicroCompactOrSummary(t *testing.T) {
 	}
 	rs = &recSummarizer{}
 	c = New(batchConfig(), rs.fn)
+	c.cfg.BreakerRegrowth = -1 // only the cool-down reopens it here
 	c.trip()
 	out = c.Pre(context.Background(), old(1+microKeepRecent, 300), 80000)
 	if countCleared(out) != 1 || rs.calls != 0 {

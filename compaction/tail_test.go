@@ -120,12 +120,12 @@ func TestTailNeverStartsOnAToolResult(t *testing.T) {
 // never falls between a call and any of its results.
 func TestTailKeepsParallelCallsTogether(t *testing.T) {
 	history := []llm.Message{
-		llm.UserText("the task"),
-		toolUseMsg("a"), toolResultMsg("out", "a"),
+		bigMsg(llm.RoleUser, 600),
+		toolUseMsg("a"), toolResultMsg(strings.Repeat("out ", 100), "a"),
 		toolUseMsg("p", "q", "r"),
-		toolResultMsg("out", "p"),
-		toolResultMsg("out", "q", "r"), // the results arrive in two messages
-		toolUseMsg("z"), toolResultMsg("out", "z"),
+		toolResultMsg(strings.Repeat("out ", 100), "p"),
+		toolResultMsg(strings.Repeat("out ", 100), "q", "r"), // the results arrive in two messages
+		toolUseMsg("z"), toolResultMsg(strings.Repeat("out ", 100), "z"),
 	}
 	for keep := 1; keep <= 7; keep++ {
 		rs := &recSummarizer{}

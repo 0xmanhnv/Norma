@@ -20,7 +20,44 @@ const (
 	// than what fits beside a summary, so summarizing the rest cannot bring
 	// the context under the threshold.
 	ReasonMessageExceedsBudget Reason = "message_exceeds_budget"
+	// ReasonSummaryFailed: the summarizer returned an error (Event.Err).
+	ReasonSummaryFailed Reason = "summary_failed"
+	// ReasonSummaryNotSmaller: the summary was made, but the view with it is
+	// no smaller than the view without, so it was thrown away.
+	ReasonSummaryNotSmaller Reason = "summary_not_smaller"
+	// ReasonSummaryRejected: a summary was thrown away earlier on this same
+	// turn, so no second one was asked for.
+	ReasonSummaryRejected Reason = "summary_rejected_this_turn"
+	// ReasonCancelled: the run's context ended while the summary was being made.
+	ReasonCancelled Reason = "cancelled"
 )
+
+// Kinds of compaction pass an Event reports.
+const (
+	KindMicro   = "micro"   // old tool results cleared
+	KindSummary = "summary" // the head summarized behind a boundary
+)
+
+// Event describes one compaction pass, or one that was due and did not
+// happen. It is delivered to Config.OnEvent for the passes the compactor makes
+// by itself before a request (Trigger "auto") and for the ones made after a
+// context overflow (Trigger "reactive") alike.
+type Event struct {
+	Kind    string // KindMicro or KindSummary
+	Trigger string // "auto" or "reactive"
+	// Applied is true when the history was changed. When false, Reason says
+	// why nothing happened and Err carries the summarizer's error, if any.
+	Applied bool
+	Reason  Reason
+	Err     error
+	// TokensBefore is the size of the context the pass was decided on: the
+	// provider's reported count when there is one, the local estimate
+	// otherwise. TokensAfter is that size less what the pass saved; equal to
+	// TokensBefore when nothing was applied.
+	TokensBefore, TokensAfter int
+	// MessagesSummarized (summary) and ResultsCleared (micro) size the pass.
+	MessagesSummarized, ResultsCleared int
+}
 
 // tailHardLimit is the most the kept tail may weigh for a compaction to be
 // worth making: what is left under the summary threshold once the summary
