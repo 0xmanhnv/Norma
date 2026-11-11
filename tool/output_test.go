@@ -184,3 +184,30 @@ func TestOutputOf(t *testing.T) {
 		t.Fatal("Write declares no output")
 	}
 }
+
+// A declaration with no Render is a configuration mistake, reported as an
+// error wherever the output is used — never a panic.
+func TestDeclareOutputWithoutRender(t *testing.T) {
+	out := DeclareOutput(OutputSpec[point]{Schema: map[string]any{"type": "object"}})
+	if out == nil {
+		t.Fatal("DeclareOutput returned nil")
+	}
+	cases := map[string]func() error{
+		"Err":     out.Err,
+		"Project": func() error { _, err := out.Project(nil, point{X: 1}); return err },
+		"Apply":   func() error { _, err := out.Apply(nil, Result{Data: point{X: 1}}); return err },
+		"ApplyRewrite": func() error {
+			_, err := ApplyRewrite(out, nil, Result{}, ReplaceValue(point{X: 1}))
+			return err
+		},
+	}
+	for name, call := range cases {
+		err := call()
+		if !llm.IsCode(err, llm.CodeInvalidConfig) || !strings.Contains(err.Error(), "Render") {
+			t.Errorf("%s: err = %v, want invalid_config naming Render", name, err)
+		}
+	}
+	if err := pointOutput(nil).Err(); err != nil {
+		t.Errorf("a valid output reports %v", err)
+	}
+}

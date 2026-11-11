@@ -111,30 +111,3 @@ func TestSessionKeepsUpWhenTheCallerStopsEarly(t *testing.T) {
 		t.Fatalf("next request is invalid: %s", e)
 	}
 }
-
-func TestDropUnpairedTail(t *testing.T) {
-	user := llm.UserText("q")
-	call := llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{
-		{Type: llm.BlockToolUse, ID: "a"}, {Type: llm.BlockToolUse, ID: "b"}}}
-	res := func(ids ...string) llm.Message {
-		m := llm.Message{Role: llm.RoleUser}
-		for _, id := range ids {
-			m.Content = append(m.Content, llm.ContentBlock{Type: llm.BlockToolResult, ToolUseID: id})
-		}
-		return m
-	}
-	cases := map[string]struct {
-		in   []llm.Message
-		want int
-	}{
-		"calls with no results":     {[]llm.Message{user, call}, 1},
-		"partial results":           {[]llm.Message{user, call, res("a")}, 1},
-		"complete exchange is kept": {[]llm.Message{user, call, res("a", "b")}, 3},
-		"plain conversation":        {[]llm.Message{user}, 1},
-	}
-	for name, c := range cases {
-		if got := dropUnpairedTail(c.in); len(got) != c.want {
-			t.Errorf("%s: kept %d messages, want %d", name, len(got), c.want)
-		}
-	}
-}

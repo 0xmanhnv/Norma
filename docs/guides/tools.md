@@ -107,7 +107,10 @@ either reports `killed_by` and `cap` in its result instead of an exit code; see
 Before a tool runs, `harness/tools.go: execOne` **coerces then validates** the model's
 arguments against the schema (`tool.CoerceInput`, `tool.ValidateInput`). Coercion
 repairs common mistypings (a number or a JSON array sent as a string) so a nearly
-right call is not rejected. A tool that would rather repair malformed input itself can
+right call is not rejected. Validation covers the object type, `required`, the
+primitive type of each property (nested objects and array items included) and
+`enum`: a value outside a declared enum is rejected with the allowed values listed. A
+tool that would rather repair malformed input itself can
 opt out of validation by reporting `RawInput` — the schema is still advertised to the
 model.
 
@@ -142,6 +145,10 @@ reaches `OnToolResult`, so this is presentation, not confidentiality) or
 
 A failed call also carries a machine-readable `Result.ErrorCode` (an `llm.Code`) for
 hosts, hooks, and the transcript (`ContentBlock.ToolError`); the model never sees it.
+
+`Render` is required. `DeclareOutput` does not panic without one: it returns an
+`Output` whose `Err()` reports the mistake (`llm.CodeInvalidConfig`), and every
+`Project` or `Apply` on it fails with that error.
 
 ## Deferred tools
 

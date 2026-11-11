@@ -50,7 +50,7 @@ Only when none of these fire does the loop finish `completed`.
 
 ## Recovery paths
 
-The loop recovers from two provider failure modes without the host doing anything:
+The loop recovers from these provider failure modes without the host doing anything:
 
 - **Prompt too long (overflow).** On the first overflow error the loop asks the
   compactor to force one `Reactive` AutoCompact and retries the turn once
@@ -59,8 +59,32 @@ The loop recovers from two provider failure modes without the host doing anythin
 - **`max_tokens` truncation with no tool calls.** The loop can escalate the output
   cap (to 64k if `EscalateMaxTokens` is set) and/or run resume-recovery, bounded by
   `maxOutputTokensRecoveryLimit = 3`, before surfacing the truncated turn.
+- **A tool call cut off by `max_tokens`.** When a streamed turn stops at the output
+  limit in the middle of a tool call's arguments, the call is not run. It is answered
+  with a `truncated` error result (`tool.CodeTruncated`) telling the model the call
+  was cut off and to retry with a smaller one; calls that arrived whole before it run
+  as usual. With `EscalateMaxTokens` set, the following turns get the raised output
+  cap until one fits. This one is an ordinary tool turn and does advance `turnCount`.
 
-These are *retries of the same turn* — they do not advance `turnCount`.
+The first two are *retries of the same turn* — they do not advance `turnCount`.
+
+### A stream that breaks mid-turn
+
+A model stream can fail after part of the turn has arrived. A tool call still being
+received at that point is incomplete and is never run. Calls that had arrived whole
+have already started (tools run while the stream is still arriving): the loop waits
+for them, then appends the assistant turn as far as the last of those calls and their
+results to the conversation and the transcript. The run still finishes `model_error`
+(or `aborted_streaming` on cancellation), but a retry or a resume sees what ran
+instead of repeating it. If no call had started, nothing is appended.
+
+### Refusal
+
+A turn that ends with the provider's `refusal` stop reason finishes the run with the
+reason `refusal`, not `completed`. `Terminal.Err` carries `llm.CodeRefusal`, so
+`agentcore.Run` returns an error for it. Any text that came with the refusal is kept
+as the assistant message and in `Terminal.Text`; a refusal with no content appends no
+assistant message at all.
 
 ## Budgets and the wrap-up phase
 
@@ -76,11 +100,14 @@ wrap-up on the live parent context instead of aborting.
 
 Every exit carries a typed `TerminalReason` on the final `KindResult` event
 (`harness/event.go`): `completed`, `max_turns`, `timeout`, `model_error`,
-`prompt_too_long`, `aborted_streaming`, `aborted_tools`, `stop_hook_prevented`,
-`hook_stopped`, `blocking_limit`, `image_error`. The `Terminal` struct also carries
-the error (if any), the run's own usage, what its subagents used (`SubagentUsage`,
-kept separate), the turn count, a full message snapshot, and the assistant's final
-text. If the host stops ranging before the end, no `KindResult` is sent;
+`refusal`, `prompt_too_long`, `aborted_streaming`, `aborted_tools`,
+`stop_hook_prevented`, `hook_stopped`, `blocking_limit`, `image_error`. The `Terminal`
+struct also carries the error (if any), the stop reason the provider gave for the
+last model turn (`StopReason`), the run's own usage, what its subagents used
+(`SubagentUsage`, kept separate), the turn count, a full message snapshot, and the
+assistant's final text. `Terminal.Usage` covers that one `Prompt`;
+`Session.Usage()` is the running total for the session, including what a resumed
+transcript had recorded, and `Session.LastUsage()` is the most recent prompt alone. If the host stops ranging before the end, no `KindResult` is sent;
 `QueryInput.OnExit` still receives a `Terminal` with reason `consumer_stopped`.
 
 ## Streaming vs non-streaming

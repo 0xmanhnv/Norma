@@ -39,6 +39,7 @@ const (
 	ReasonBlockingLimit     TerminalReason = "blocking_limit"      // hard context limit hit pre-request
 	ReasonImageError        TerminalReason = "image_error"         // unsupported media (multimodal)
 	ReasonModelError        TerminalReason = "model_error"         // provider/API failure
+	ReasonRefusal           TerminalReason = "refusal"             // the model ended its turn with the "refusal" stop reason
 	ReasonAbortedStreaming  TerminalReason = "aborted_streaming"   // canceled during streaming
 	ReasonAbortedTools      TerminalReason = "aborted_tools"       // canceled during tool execution
 	ReasonPromptTooLong     TerminalReason = "prompt_too_long"     // overflow recovery exhausted
@@ -67,7 +68,11 @@ const (
 type Terminal struct {
 	Reason TerminalReason
 	Err    error
-	Usage  llm.Usage
+	// StopReason is the stop reason the provider gave for the last model turn
+	// that finished ("end_turn", "tool_use", "max_tokens", "refusal", …), as the
+	// adapter normalized it. Empty when no model turn finished.
+	StopReason string
+	Usage      llm.Usage
 	// SubagentUsage is what agents started by this run's tools used (subagents and
 	// theirs, all the way down). It is kept apart from Usage, which only counts this
 	// run's own model calls and drives its token budget; the total cost is the sum.

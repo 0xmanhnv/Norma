@@ -104,6 +104,7 @@ const (
 	CodeHookBlocked      llm.Code = "hook_blocked"      // a PreToolUse hook blocked the call
 	CodeToolUnavailable  llm.Code = "tool_unavailable"  // the tool is switched off for this phase of the run
 	CodeInterrupted      llm.Code = "interrupted"       // the call was cut off before it finished
+	CodeTruncated        llm.Code = "truncated"         // the model's output limit cut the call's arguments short; it was not run
 )
 
 // Text builds a successful text result.

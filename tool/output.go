@@ -45,6 +45,7 @@ type OutputSpec[T any] struct {
 type Output struct {
 	schema  map[string]any
 	project func(args json.RawMessage, value any) (Projection, error)
+	err     error // why the declaration is unusable (Err); nil for a valid one
 }
 
 // Projection is a validated, frozen value with the content and metadata
@@ -58,12 +59,21 @@ type Projection struct {
 	Meta    map[string]any
 }
 
-// DeclareOutput builds an Output from its spec. T must round-trip through
+// DeclareOutput builds an Output from its spec. Render is required: without it
+// the returned Output is unusable and says so (Output.Err). T must round-trip through
 // encoding/json: the snapshot is its JSON encoding, so what survives that
 // encoding is exactly what the schema checks and the renderer sees.
 func DeclareOutput[T any](s OutputSpec[T]) *Output {
 	if s.Render == nil {
-		panic("tool: DeclareOutput needs a Render function")
+		// A library does not panic on a bad argument. The Output is returned
+		// unusable instead: Err reports why, and every Project/Apply fails
+		// with the same error, so the mistake cannot go unnoticed.
+		err := llm.NewError(llm.CodeInvalidConfig, "tool: DeclareOutput needs a Render function")
+		return &Output{
+			schema:  s.Schema,
+			err:     err,
+			project: func(json.RawMessage, any) (Projection, error) { return Projection{}, err },
+		}
 	}
 	want := reflect.TypeFor[T]()
 	return &Output{
@@ -103,6 +113,17 @@ func DeclareOutput[T any](s OutputSpec[T]) *Output {
 			return Projection{Value: frozen, Content: content, Meta: meta}, nil
 		},
 	}
+}
+
+// Err reports a declaration that cannot be used: today, a spec with no Render
+// function (llm.CodeInvalidConfig). Nil for a valid Output. A host that builds
+// outputs from configuration can check it at start-up; Project and Apply
+// return the same error on every call otherwise.
+func (o *Output) Err() error {
+	if o == nil {
+		return nil
+	}
+	return o.err
 }
 
 // Schema returns the declared output schema, e.g. for advertising it.

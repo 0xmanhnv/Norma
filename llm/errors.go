@@ -32,6 +32,10 @@ const (
 	CodeUnavailable Code = "unavailable"
 	// CodeInvalidRequest is any other provider rejection of the request.
 	CodeInvalidRequest Code = "invalid_request"
+	// CodeRefusal is a model turn that ended with the provider's "refusal" stop
+	// reason: the model declined to continue. It is not a transport failure and
+	// retrying the same request is not expected to help.
+	CodeRefusal Code = "refusal"
 
 	// CodeInvalidConfig is a configuration the SDK cannot run with.
 	CodeInvalidConfig Code = "invalid_config"

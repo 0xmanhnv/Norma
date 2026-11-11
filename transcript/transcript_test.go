@@ -158,7 +158,9 @@ func TestNewIDsAreDistinctAndNonEmpty(t *testing.T) {
 	}
 }
 
-func TestLoadCorruptLineErrors(t *testing.T) {
+// A corrupt line no longer fails the file: Load returns the records it could
+// read, and LoadReport names the line it left out.
+func TestLoadSkipsCorruptLine(t *testing.T) {
 	s := NewStore(t.TempDir())
 	path := s.MainPath("sess")
 	// Write a valid record, then a corrupt (non-JSON) line.
@@ -167,8 +169,13 @@ func TestLoadCorruptLineErrors(t *testing.T) {
 	if err := appendRaw(path, "{not valid json\n"); err != nil {
 		t.Fatalf("setup append: %v", err)
 	}
-	if _, err := s.Load(path); err == nil {
-		t.Fatal("Load should error on a corrupt line")
+	recs, err := s.Load(path)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("Load = %d record(s), err %v; want the one valid record", len(recs), err)
+	}
+	_, skipped, err := s.LoadReport(path)
+	if err != nil || len(skipped) != 1 || skipped[0].Line != 2 || skipped[0].Err == nil {
+		t.Fatalf("LoadReport skipped %+v, err %v; want line 2 reported", skipped, err)
 	}
 }
 
