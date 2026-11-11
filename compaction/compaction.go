@@ -47,9 +47,16 @@ type Config struct {
 	// MaxOutputTokens is the model's max output capability; the summary reservation
 	// is min(MaxOutputTokens, 20000) (default 8000).
 	MaxOutputTokens int
-	// KeepRecent is the number of recent messages AutoCompact always preserves as
-	// the un-summarized tail (default 8). MicroCompact uses its own microKeepRecent.
+	// KeepRecent caps how many recent messages AutoCompact preserves as the
+	// un-summarized tail (default 8). The tail always starts at a turn
+	// boundary, so it may hold fewer. MicroCompact uses its own microKeepRecent.
 	KeepRecent int
+	// KeepRecentTokens is the token budget of that tail: the most recent
+	// turns are kept while they fit in it. Default: a fifth of the effective
+	// window. Counting messages alone kept eight messages however large, so a
+	// few huge tool results could leave nothing to summarize; and it cut
+	// wherever the count fell, including between a tool call and its result.
+	KeepRecentTokens int
 	// BreakerCooldown is how long AutoCompact stays off after its summarizer
 	// failed three times in a row. When it has passed, the next compaction is
 	// tried once: success closes the breaker, another failure starts a new
@@ -133,6 +140,8 @@ type Compactor struct {
 	tripped bool
 	retryAt time.Time
 	now     func() time.Time // the clock; replaced in tests
+	// lastReason is why the most recent autoCompact did nothing ("" if it ran).
+	lastReason Reason
 
 	// mu guards prefix and usage, which the loop's goroutine and a host
 	// reading TakeUsage may touch from different goroutines.
@@ -416,26 +425,6 @@ func IsOverflow(err error) bool {
 
 // --- working-set geometry ---
 
-// workingBounds returns [start, tailStart): start is just after the last
-// boundary marker (0 if none); tailStart is where the preserved recent tail
-// begins. Messages in [start, tailStart) are eligible for summary.
-func (c *Compactor) workingBounds(msgs []llm.Message) (start, tailStart int) {
-	start = llm.LastBoundaryIndex(msgs) + 1
-	tailStart = max(lastNNonMarkerStart(msgs, c.cfg.KeepRecent), start)
-	return
-}
-
-func lastNNonMarkerStart(msgs []llm.Message, keep int) int {
-	count, i := 0, len(msgs)
-	for i > 0 && count < keep {
-		i--
-		if !llm.IsBoundaryMarker(msgs[i]) {
-			count++
-		}
-	}
-	return i
-}
-
 // --- MicroCompact: keep the most recent N compactable results, clear the rest ---
 
 // microClearSet returns the tool_use ids whose results a MicroCompact pass
@@ -523,17 +512,21 @@ func isCleared(blocks []llm.ContentBlock) bool {
 // --- AutoCompact: non-destructive boundary + summary ---
 
 func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok int, trigger string) ([]llm.Message, bool) {
-	if c.summarize == nil || !c.breakerAllows() {
+	c.lastReason = ""
+	switch {
+	case c.summarize == nil:
+		c.lastReason = ReasonNoSummarizer
+		return msgs, false
+	case !c.breakerAllows():
+		c.lastReason = ReasonBreakerOpen
 		return msgs, false
 	}
-	start, tailStart := c.workingBounds(msgs)
-	if tailStart <= start {
+	start, tailStart, reason := c.workingBounds(msgs)
+	if reason != "" {
+		c.lastReason = reason
 		return msgs, false
 	}
 	toSummarize := contentOnly(msgs[start:tailStart])
-	if len(toSummarize) == 0 {
-		return msgs, false
-	}
 	call := c.summaryCall(msgs, toSummarize, trigger == "reactive")
 	summary, err := c.summarize(context.WithValue(ctx, summaryCallKey{}, call), toSummarize)
 	c.mu.Lock()

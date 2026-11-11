@@ -61,7 +61,7 @@ func sessionPrefix() llm.CompletionRequest {
 
 func longConversation() []llm.Message {
 	var msgs []llm.Message
-	for i := range 8 {
+	for i := range 9 { // ends on a user message; the kept tail is [assistant, user]
 		role := llm.RoleUser
 		if i%2 == 1 {
 			role = llm.RoleAssistant
