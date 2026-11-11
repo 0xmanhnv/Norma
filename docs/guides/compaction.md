@@ -155,6 +155,41 @@ from reported usage as the session goes; set `TokenCalibration` for content that
 dense from the first request (hex, base64, JSON run near 2), and `StaticPrefixTokens`
 if you have measured your tools and system prompt.
 
+### Hooks
+
+Four `Config` fields let a host keep what a prose summary loses.
+
+- **`AfterCompact`** is called each time a summary has been made. The user messages
+  it returns are placed right after the summary (and any re-injected skills), ahead of
+  the kept tail: the first thing the model reads once the detail is gone. Use it for a
+  recovery note, the current plan or a list of open items. It is shown a
+  `compaction.Compacted` (trigger, size, the summary, what was summarized and what is
+  kept). What it returns counts toward the new view, so keep it short.
+- **`MicroStub`** writes the text left in place of a tool result MicroCompact clears.
+  It gets the result and returns the stub. Left unset, `DefaultMicroStub` is used: the
+  cleared notice, the first line of the result, and the spill pointer when the output
+  had been moved to a file (`tool.SpillPointer`), so the full copy can still be read.
+- **`SummaryPrompt`** replaces the summary instruction. `DefaultSummaryPrompt()`
+  returns the built-in one, to extend rather than replace it.
+- **`References`** makes a "References" section mandatory. It is given the messages
+  about to be summarized and returns identifiers that must survive verbatim (ids,
+  paths, URLs). The instruction asks the model to list them, and the compactor then
+  appends every one the summary does not contain word for word, in the order given,
+  so the result always holds all of them. `Event.ReferencesAdded` says how many it
+  had to add.
+
+```go
+compaction.Config{
+    AfterCompact: func(ctx context.Context, c compaction.Compacted) []llm.Message {
+        return []llm.Message{llm.UserText("Open items:\n" + openItems())}
+    },
+    References: func(summarized []llm.Message) []string { return idsIn(summarized) },
+}
+```
+
+The harness loop also puts the todo list (`Options.Todos`) back in front of the model
+right after a compaction, instead of waiting for the usual reminder interval.
+
 ### Skills survive boundaries
 
 Procedural skill instructions are lossy in a prose summary. When a boundary

@@ -3,7 +3,10 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -19,64 +22,102 @@ const (
 	TodoCompleted  TodoStatus = "completed"
 )
 
-// TodoRef optionally links a todo to a record the host keeps, so the host can
-// annotate the todo's real status from its own truth instead of trusting the
-// model's manual mark. Both fields are opaque strings to the harness — the host
-// populates and interprets them. The zero value (both empty) means "no link":
-// the todo is an ordinary free-text item and behaves exactly as before.
-type TodoRef struct {
-	// IntentID names a unit of work the host tracks (e.g. an exploration intent
-	// id). Empty when this todo does not track one.
-	IntentID string `json:"intent_id,omitempty"`
-	// CoverageCell names a coverage-matrix cell the host tracks. Empty when this
-	// todo does not track one.
-	CoverageCell string `json:"coverage_cell,omitempty"`
-}
-
-// Empty reports whether the ref links to nothing — a plain free-text todo.
-func (r TodoRef) Empty() bool { return r.IntentID == "" && r.CoverageCell == "" }
-
 // Todo is one task in the agent's working plan.
 type Todo struct {
 	Content string     `json:"content"`
 	Status  TodoStatus `json:"status"`
-	// Ref optionally links this todo to a host record (see TodoRef). Empty =
-	// a free-text todo, the default and the backward-compatible behavior: a
-	// todo written without a ref decodes to the zero TodoRef.
+	// Meta is optional free-form metadata: string keys and values the harness
+	// stores and returns but never interprets. A host uses it to tie a todo to
+	// a record of its own (a ticket id, a row key) so it can check the todo
+	// against its own state instead of trusting the mark. Nil for an ordinary
+	// todo, which then encodes exactly as {"content","status"}.
 	//
-	// `omitempty` does not drop a zero struct, so MarshalJSON below omits an
-	// empty ref by hand — a ref-less todo must serialize exactly as it did
-	// before this field existed ({"content","status"}), or consumers that
-	// re-emit the list (e.g. todo self-heal) would start carrying a stray
-	// "ref":{} that strict decoders reject.
-	Ref TodoRef `json:"ref,omitempty"`
+	// A todo written by an older version carries a "ref" object instead; its
+	// string fields are read into Meta under the same keys (see UnmarshalJSON).
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
-// MarshalJSON writes a todo, omitting an empty ref so a ref-less todo keeps the
-// exact {"content","status"} wire form it had before Ref was added.
-func (t Todo) MarshalJSON() ([]byte, error) {
-	type todoJSON struct {
-		Content string     `json:"content"`
-		Status  TodoStatus `json:"status"`
-		Ref     *TodoRef   `json:"ref,omitempty"`
+// UnmarshalJSON reads a todo. Besides "meta" it accepts the deprecated "ref"
+// object earlier versions wrote: each of its string fields becomes a Meta
+// entry under the same key, unless "meta" already has that key. Stored lists
+// and transcripts from before the change therefore load unchanged. "ref" is
+// never written back.
+func (t *Todo) UnmarshalJSON(data []byte) error {
+	var in struct {
+		Content string            `json:"content"`
+		Status  TodoStatus        `json:"status"`
+		Meta    map[string]string `json:"meta"`
+		Ref     map[string]any    `json:"ref"` // deprecated
 	}
-	tj := todoJSON{Content: t.Content, Status: t.Status}
-	if !t.Ref.Empty() {
-		r := t.Ref
-		tj.Ref = &r
+	if err := json.Unmarshal(data, &in); err != nil {
+		return err
 	}
-	return json.Marshal(tj)
+	t.Content, t.Status, t.Meta = in.Content, in.Status, in.Meta
+	for k, v := range in.Ref {
+		s, ok := v.(string)
+		if !ok || s == "" {
+			continue
+		}
+		if _, set := t.Meta[k]; set {
+			continue
+		}
+		if t.Meta == nil {
+			t.Meta = map[string]string{}
+		}
+		t.Meta[k] = s
+	}
+	if len(t.Meta) == 0 {
+		t.Meta = nil
+	}
+	return nil
+}
+
+// TodoPersister keeps a todo list outside the process, so that it survives a
+// restart. Implement it over whatever the host stores state in (a file, a
+// database row keyed by the session) and hand it to NewPersistentTodoStore;
+// TodoFile is a ready-made one over a JSON file.
+//
+// SaveTodos receives the whole list each time the model rewrites it and must
+// replace what was stored. LoadTodos returns the stored list, and (nil, nil)
+// when nothing has been stored yet. Both are called with the store's lock
+// held, one at a time.
+type TodoPersister interface {
+	LoadTodos() ([]Todo, error)
+	SaveTodos([]Todo) error
 }
 
 // TodoStore holds the current todo list across tool calls. It is safe for
 // concurrent reads; the host can inspect progress via List.
 type TodoStore struct {
-	mu    sync.Mutex
-	items []Todo
+	mu      sync.Mutex
+	items   []Todo
+	persist TodoPersister
+	saveErr error
 }
 
-// NewTodoStore returns an empty store.
+// NewTodoStore returns an empty store that lives in memory only.
 func NewTodoStore() *TodoStore { return &TodoStore{} }
+
+// NewPersistentTodoStore returns a store backed by p: it starts with the list
+// p has stored, and every list the model writes is saved through p. With it a
+// session that is resumed after a restart still has its plan, where a plain
+// store starts empty and the model has to rebuild the list from a summary.
+//
+// A load error is returned together with a usable, empty store. A save error
+// does not fail the model's call (the list is still current in memory); it is
+// kept for the host to read with Err.
+func NewPersistentTodoStore(p TodoPersister) (*TodoStore, error) {
+	s := &TodoStore{persist: p}
+	if p == nil {
+		return s, nil
+	}
+	items, err := p.LoadTodos()
+	if err != nil {
+		return s, fmt.Errorf("tool: load todos: %w", err)
+	}
+	s.items = items
+	return s, nil
+}
 
 // List returns a snapshot of the current todos.
 func (s *TodoStore) List() []Todo {
@@ -85,10 +126,73 @@ func (s *TodoStore) List() []Todo {
 	return append([]Todo(nil), s.items...)
 }
 
+// Err returns the error of the most recent save to the store's TodoPersister,
+// nil when it succeeded or the store is not persistent.
+func (s *TodoStore) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveErr
+}
+
 func (s *TodoStore) set(items []Todo) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.items = items
-	s.mu.Unlock()
+	if s.persist != nil {
+		s.saveErr = s.persist.SaveTodos(append([]Todo(nil), items...))
+	}
+}
+
+// TodoFile returns a TodoPersister that keeps the list in the JSON file at
+// path. The file is replaced atomically on every save (written beside itself,
+// then renamed), so a crash leaves either the old list or the new one. A
+// missing file is an empty list.
+func TodoFile(path string) TodoPersister { return todoFile(path) }
+
+type todoFile string
+
+func (f todoFile) LoadTodos() ([]Todo, error) {
+	b, err := os.ReadFile(string(f))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var items []Todo
+	if err := json.Unmarshal(b, &items); err != nil {
+		return nil, fmt.Errorf("%s: %w", string(f), err)
+	}
+	return items, nil
+}
+
+func (f todoFile) SaveTodos(items []Todo) error {
+	if items == nil {
+		items = []Todo{}
+	}
+	b, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(string(f)), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(string(f)), filepath.Base(string(f))+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(append(b, '\n'))
+	cerr := tmp.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), string(f))
+	}
+	if werr != nil {
+		os.Remove(tmp.Name())
+	}
+	return werr
 }
 
 // Tool returns the TodoWrite tool bound to this store. The agent uses it to
@@ -97,7 +201,7 @@ func (s *TodoStore) Tool() CoreTool {
 	return Build(Spec{
 		Name:        TodoWriteName,
 		Description: "Records and updates a structured todo list for the current task. Use it to plan multi-step work and to mark progress — replace the whole list each call, marking exactly one item in_progress while working.",
-		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions. Optional ref links a todo to a host record.",
+		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions. Optional meta carries free-form string keys the host gave you for a todo; pass them back unchanged.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -108,13 +212,10 @@ func (s *TodoStore) Tool() CoreTool {
 						"properties": map[string]any{
 							"content": map[string]any{"type": "string"},
 							"status":  map[string]any{"type": "string", "enum": []any{"pending", "in_progress", "completed"}},
-							"ref": map[string]any{
-								"type":        "object",
-								"description": "Optional. Links this todo to a host record so its completion is verified from the host's truth, not the manual mark. Omit for a plain todo.",
-								"properties": map[string]any{
-									"intent_id":     map[string]any{"type": "string", "description": "id of the unit of work this todo tracks"},
-									"coverage_cell": map[string]any{"type": "string", "description": "key of the coverage-matrix cell this todo tracks"},
-								},
+							"meta": map[string]any{
+								"type":                 "object",
+								"description":          "Optional. Free-form string keys and values kept with the todo and returned unchanged, such as the id of a record this todo tracks. Omit for a plain todo.",
+								"additionalProperties": map[string]any{"type": "string"},
 							},
 						},
 						"required": []any{"content", "status"},

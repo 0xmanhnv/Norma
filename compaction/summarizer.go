@@ -32,7 +32,8 @@ const summarySystemPrompt = "You are a helpful AI assistant tasked with summariz
 type SummaryCall struct {
 	// Prefix is what every model request of the run starts with: its system
 	// prompt and boundary, tool list, cache and thinking settings, and in
-	// Messages whatever the loop sends in front of the conversation. A summary
+	// Messages whatever the caller sends in front of the conversation (the
+	// harness loop sends nothing there). A summary
 	// request built on it reads the run's prompt cache, because a cache is
 	// keyed on exactly these bytes. HasPrefix is false when the loop never
 	// announced one (Compactor.SetRequestPrefix), and Prefix is then empty.
@@ -44,6 +45,11 @@ type SummaryCall struct {
 	// overflow it holds only the part being summarized, since the whole would
 	// overflow again.
 	Conversation []llm.Message
+	// Prompt is the summary instruction to send as the last message of the
+	// request: Config.SummaryPrompt or the built-in one, followed, when
+	// Config.References named any, by the request to list those identifiers
+	// in a References section. A custom Summarizer should send it as is.
+	Prompt string
 
 	usage llm.Usage
 }
@@ -119,10 +125,14 @@ func providerSummarizer(p llm.Provider, maxOutputTokens int, nonStreaming, share
 		}
 		base.MaxTokens = maxOut
 		base.VolatileTail = 0
+		prompt := compactPrompt
+		if call != nil && call.Prompt != "" {
+			prompt = call.Prompt
+		}
 		lead := base.Messages
 		var lastErr error
 		for attempt := 0; attempt <= maxPTLRetries; attempt++ {
-			raw, err := streamSummary(ctx, p, base, lead, work, nonStreaming, call)
+			raw, err := streamSummary(ctx, p, base, lead, work, prompt, nonStreaming, call)
 			if err == nil {
 				return formatCompactSummary(raw), nil
 			}
@@ -141,16 +151,16 @@ func providerSummarizer(p llm.Provider, maxOutputTokens int, nonStreaming, share
 }
 
 // streamSummary issues one summary request — base with lead, the conversation
-// and the summary-request message as its messages — retrying transient
+// and the summary instruction (prompt) as its messages — retrying transient
 // (non-overflow) failures. Overflow is returned immediately so the caller can
 // truncate and retry at a coarser granularity. Usage of every attempt that
 // reported any goes to call.
-func streamSummary(ctx context.Context, p llm.Provider, base llm.CompletionRequest, lead, conv []llm.Message, nonStreaming bool, call *SummaryCall) (string, error) {
+func streamSummary(ctx context.Context, p llm.Provider, base llm.CompletionRequest, lead, conv []llm.Message, prompt string, nonStreaming bool, call *SummaryCall) (string, error) {
 	req := base
 	req.Messages = make([]llm.Message, 0, len(lead)+len(conv)+1)
 	req.Messages = append(req.Messages, lead...)
 	req.Messages = append(req.Messages, conv...)
-	req.Messages = append(req.Messages, llm.UserText(compactPrompt))
+	req.Messages = append(req.Messages, llm.UserText(prompt))
 	var lastErr error
 	for range maxStreamingRetries {
 		if ctx.Err() != nil {
@@ -304,6 +314,87 @@ func formatCompactSummary(raw string) string {
 	s = blankRe.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)
 }
+
+// DefaultSummaryPrompt returns the built-in summary instruction, the one sent
+// when Config.SummaryPrompt is empty. A host that wants to add to it rather
+// than replace it sets Config.SummaryPrompt to this plus its own text.
+func DefaultSummaryPrompt() string { return compactPrompt }
+
+// referencesHeading opens the section of a summary that lists the identifiers
+// Config.References requires.
+const referencesHeading = "References:"
+
+// summaryPrompt is the instruction of a summary request: the host's or the
+// built-in one, and, when refs are required, the request to list them.
+func (c *Compactor) summaryPrompt(refs []string) string {
+	p := c.cfg.SummaryPrompt
+	if p == "" {
+		p = compactPrompt
+	}
+	if len(refs) == 0 {
+		return p
+	}
+	var b strings.Builder
+	b.WriteString(p)
+	b.WriteString("\n\nEnd the summary with a section titled \"References\" that lists each of the identifiers below exactly as written, one per line. ")
+	b.WriteString("They are how things are found again once this summary has replaced the conversation, so copy them character for character:\n")
+	for _, r := range refs {
+		b.WriteString("- ")
+		b.WriteString(r)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// cleanReferences trims the identifiers a host listed, dropping empty ones and
+// repeats and keeping the order.
+func cleanReferences(refs []string) []string {
+	seen := make(map[string]bool, len(refs))
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		r = strings.TrimSpace(r)
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	return out
+}
+
+// ensureReferences makes sure every identifier in refs is in summary word for
+// word. The ones that are not are appended in the order given, one per line,
+// under a References heading (a continuation heading when the model wrote a
+// References section of its own). It returns the summary and how many it
+// added. The same summary and refs always give the same result.
+func ensureReferences(summary string, refs []string) (string, int) {
+	var missing []string
+	for _, r := range refs {
+		if !strings.Contains(summary, r) {
+			missing = append(missing, r)
+		}
+	}
+	if len(missing) == 0 {
+		return summary, 0
+	}
+	heading := referencesHeading
+	if referencesSectionRe.MatchString(summary) {
+		heading = "References (continued):"
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(summary, "\n"))
+	b.WriteString("\n\n")
+	b.WriteString(heading)
+	for _, r := range missing {
+		b.WriteString("\n- ")
+		b.WriteString(r)
+	}
+	return b.String(), len(missing)
+}
+
+// referencesSectionRe matches a line that opens a References section, however
+// the model dressed the heading ("References:", "## References", "10. References").
+var referencesSectionRe = regexp.MustCompile(`(?mi)^[\s#*\d.)]*references\b`)
 
 // compactPrompt is the full summary-request user message:
 // NO_TOOLS_PREAMBLE + BASE_COMPACT_PROMPT + NO_TOOLS_TRAILER (§7).

@@ -44,7 +44,13 @@ A child started from a tool call inherits the calling run's deny and allow rules
 Recursion is bounded by a depth guard carried on the `context.Context`
 (`MaxDepth`), so a subagent that spawns subagents cannot recurse without limit. When a
 `transcript.Store` is configured, each subagent run is persisted to its own sidechain
-file under the parent session. Its token usage is kept apart from the parent's own:
+file under the parent session, and the result says where: `subagent.ChildSummary`
+(the `Data` of an Agent tool result, and what `subagent.RunWithSummary` returns)
+carries `SessionID`, `AgentID` and `TranscriptPath`, so the child's whole
+conversation can be loaded later with `transcript.Store.Load`. A `Definition` may also
+set `ParseOutput` to turn the child's final text into a typed value, carried on
+`ChildSummary.Output` (a parse error goes on `OutputErr` and does not fail the call;
+the calling model still reads the text). Its token usage is kept apart from the parent's own:
 the parent's `Terminal.SubagentUsage` sums everything its subagents used, all the way
 down, while `Terminal.Usage` counts only the parent's model calls.
 
@@ -71,6 +77,12 @@ flowchart TD
 - **Programmatic.** `RunParallel(tasks)` fans a known set of tasks out to workers
   concurrently — bounded by `MaxParallel` (default 4) — and returns their results for
   the caller to synthesize.
+
+Give `coordinator.Config` a `Transcript` store and every worker's conversation is
+recorded to its own sidechain file; each `Result.Summary` then carries the locator.
+The workers of one `RunParallel` call share a session id (the one in `ctx`, or a new
+one). `Config.ParseOutput` fills `Result.Summary.Output` the same way as
+`Definition.ParseOutput`.
 
 Workers run with their own prompt (`DefaultWorkerPrompt` unless overridden), permission
 mode (default `acceptEdits`), and per-worker turn cap. The subagent depth guard

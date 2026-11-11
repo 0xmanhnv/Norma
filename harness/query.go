@@ -386,12 +386,17 @@ func (l *loop) injectTaskNotifications() bool {
 // after the boundary (it also exists earlier as births); only the post-boundary
 // copy is sent to the model. RecordBoundary keeps the observability-only marker
 // (a Type:"boundary" record, skipped during reconstruction).
+//
+// A new boundary is also when the todo list is put back in front of the model
+// (injectTodoReminderAfterCompaction).
 func (l *loop) recordNewBoundary() {
-	if l.in.Recorder == nil {
-		return
-	}
 	c := countBoundaries(l.messages)
 	if c <= l.boundaryCount {
+		return
+	}
+	defer l.injectTodoReminderAfterCompaction()
+	if l.in.Recorder == nil {
+		l.boundaryCount = c
 		return
 	}
 	if i := llm.LastBoundaryIndex(l.messages); i >= 0 {
@@ -866,6 +871,31 @@ func (l *loop) maybeInjectTodoReminder() {
 	body := tool.RenderTodoReminder(todos)
 	if body == "" {
 		return
+	}
+	msg := llm.TodoReminderMessage(body)
+	l.messages = append(l.messages, msg)
+	l.record(msg, llm.Usage{})
+}
+
+// injectTodoReminderAfterCompaction puts the todo list back in front of the
+// model as soon as a compaction has summarized the turns that held it. The
+// throttle in maybeInjectTodoReminder counts assistant turns in the view, and
+// a fresh view holds only the few turns of the kept tail: left to it, the list
+// would stay out of sight for up to TodoReminderTurnsSinceWrite turns, which
+// is exactly when the model has just lost the detail of what it was doing. A
+// view that still shows a TodoWrite call or a reminder needs nothing.
+func (l *loop) injectTodoReminderAfterCompaction() {
+	if l.in.Todos == nil {
+		return
+	}
+	body := tool.RenderTodoReminder(l.in.Todos.List())
+	if body == "" {
+		return
+	}
+	for _, m := range llm.MessagesForAPI(l.messages) {
+		if llm.IsTodoReminder(m) || (m.Role == llm.RoleAssistant && messageHasToolUse(m, tool.TodoWriteName)) {
+			return
+		}
 	}
 	msg := llm.TodoReminderMessage(body)
 	l.messages = append(l.messages, msg)

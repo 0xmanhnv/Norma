@@ -16,6 +16,7 @@ import (
 	"github.com/0xmanhnv/corvid/permission"
 	"github.com/0xmanhnv/corvid/subagent"
 	"github.com/0xmanhnv/corvid/tool"
+	"github.com/0xmanhnv/corvid/transcript"
 )
 
 // DefaultWorkerPrompt is the default system prompt for worker subagents.
@@ -46,6 +47,18 @@ type Config struct {
 	// model inherit its session's settings when this is zero; workers started
 	// by RunParallel have no calling run, so set it here.
 	ModelSettings llm.ModelSettings
+	// Transcript, when non-nil, records every worker's conversation to its own
+	// sidechain file in this store (see subagent.Config.Transcript). Each
+	// Result then says where (Result.Summary), so what a worker did can be
+	// read after the fact, beyond the report it handed back. Workers started
+	// by the coordinator model are filed under its session; the workers of one
+	// RunParallel call share a session id, taken from ctx
+	// (transcript.WithSessionID) or generated for the call.
+	Transcript *transcript.Store
+	// ParseOutput, when set, turns each worker's final text into a typed
+	// value, carried on Result.Summary.Output (see
+	// subagent.Definition.ParseOutput).
+	ParseOutput func(finalText string) (any, error)
 
 	// OnResult, when set, is called once per task from RunParallel as that
 	// worker settles — in addition to the result being stored — so a host can
@@ -87,6 +100,7 @@ func (c *Config) subagentConfig() subagent.Config {
 		MaxDepth:    c.MaxDepth,
 		CanUseTool:  c.CanUseTool,
 		Hooks:       c.Hooks,
+		Transcript:  c.Transcript,
 
 		ModelSettings: c.ModelSettings,
 		Agents: map[string]subagent.Definition{
@@ -95,6 +109,7 @@ func (c *Config) subagentConfig() subagent.Config {
 				Prompt:         c.workerPrompt(),
 				PermissionMode: c.mode(),
 				MaxTurns:       c.MaxTurns,
+				ParseOutput:    c.ParseOutput,
 			},
 		},
 	}
@@ -126,6 +141,10 @@ type Result struct {
 	Task   string
 	Output string
 	Err    error
+	// Summary is what the worker cost and how it ended, the locator of its
+	// transcript when Config.Transcript is set, and its typed output when
+	// Config.ParseOutput is. Zero for a task that was never launched.
+	Summary subagent.ChildSummary
 }
 
 // RunParallel fans tasks out to workers concurrently (bounded by MaxParallel)
@@ -144,6 +163,10 @@ func (c *Config) RunParallel(ctx context.Context, tasks []string) []Result {
 	// disturbing the caller's context. The defer catches the normal return.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// One session for the fleet, so the workers' transcripts sit together.
+	if c.Transcript != nil && transcript.SessionIDFrom(ctx) == "" {
+		ctx = transcript.WithSessionID(ctx, transcript.NewSessionID())
+	}
 
 	// report stores a result and, under a mutex, forwards it to OnResult. Each
 	// task owns a distinct slice index, so only the callback needs guarding.
@@ -170,8 +193,8 @@ func (c *Config) RunParallel(ctx context.Context, tasks []string) []Result {
 		go func(i int, task string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			out, err := subagent.Run(ctx, cfg, "worker", task, c.WorkingDir)
-			report(i, Result{Task: task, Output: out, Err: err})
+			out, sum, err := subagent.RunWithSummary(ctx, cfg, "worker", task, c.WorkingDir)
+			report(i, Result{Task: task, Output: out, Err: err, Summary: sum})
 			if c.StopOnFatal && fatalFleetError(err) {
 				cancel()
 			}
