@@ -99,6 +99,22 @@ func TestClassifyStatus(t *testing.T) {
 		// the reactive compaction it would trigger cannot fix it.
 		{400, `{"error":{"message":"tools.0.name: String should match pattern"}}`, CodeInvalidRequest},
 		{404, `model not found`, CodeInvalidRequest},
+		// The words "too long" alone say nothing about the context window.
+		{400, `{"error":{"message":"tools.3.custom.name: String should have at most 64 characters, the name is too long"}}`, CodeInvalidRequest},
+		{400, `{"error":{"message":"Invalid 'metadata.user_id': string too long. Expected a string with maximum length 64"}}`, CodeInvalidRequest},
+		{504, `The request took too long to process`, CodeUnavailable},
+		{429, `{"error":{"message":"Request too large for model on tokens per min (TPM): Limit 30000, Requested 41000","code":"rate_limit_exceeded"}}`, CodeRateLimited},
+		// The context-length rejections of the providers reachable through
+		// the three wire formats.
+		{400, `{"type":"error","error":{"type":"invalid_request_error","message":"input length and ` + "`max_tokens`" + ` exceed context limit: 190000 + 20000 > 200000, decrease input length or ` + "`max_tokens`" + ` and try again"}}`, CodeContextOverflow},
+		{400, `{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","code":"context_length_exceeded"}}`, CodeContextOverflow},
+		{400, `{"error":{"message":"Please reduce the length of the messages or completion.","type":"invalid_request_error"}}`, CodeContextOverflow},
+		{400, `{"error":{"code":400,"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}`, CodeContextOverflow},
+		{400, `{"message":"Input is too long for requested model."}`, CodeContextOverflow},
+		{400, `{"error":"This model's maximum prompt length is 131072 but the request contains 140000 tokens."}`, CodeContextOverflow},
+		{400, `{"error":{"message":"the request exceeds the available context size, try increasing it"}}`, CodeContextOverflow},
+		{422, `{"message":"Prompt contains 40000 tokens and 0 draft tokens, too large for model with 32768 maximum context length"}`, CodeContextOverflow},
+		{400, `{"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}`, CodeContextOverflow},
 	} {
 		if got := classifyStatus(tc.status, tc.body); got != tc.want {
 			t.Errorf("classifyStatus(%d, %q) = %q, want %q", tc.status, tc.body, got, tc.want)
@@ -228,4 +244,33 @@ func streamErr(p Provider) error {
 		}
 	}
 	return nil
+}
+
+// LooksLikeOverflow is the fallback for errors that carry no code. It must not
+// fire on an error that merely contains "too long": that sends the loop into a
+// compaction that costs a summary and fixes nothing.
+func TestLooksLikeOverflowIsSpecific(t *testing.T) {
+	for _, s := range []string{
+		"tool name is too long",
+		"string too long. Expected a string with maximum length 64",
+		"the request took too long to process",
+		"stop sequence too long",
+		"rate limit reached for requests",
+		"overloaded",
+	} {
+		if LooksLikeOverflow(s) {
+			t.Errorf("LooksLikeOverflow(%q) = true", s)
+		}
+	}
+	for _, s := range []string{
+		"anthropic: status 400: prompt is too long",
+		"openai: status 400: maximum context length is 128000 tokens",
+		"custom provider: CONTEXT_LENGTH_EXCEEDED",
+		"openai: status 413: payload too large",
+		"exceeds the context window",
+	} {
+		if !LooksLikeOverflow(s) {
+			t.Errorf("LooksLikeOverflow(%q) = false", s)
+		}
+	}
 }
