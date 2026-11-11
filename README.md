@@ -57,6 +57,14 @@ flowchart LR
 | `coordinator` | Coordinator mode: a top-level agent that decomposes work and delegates to isolated `worker` subagents — LLM-driven (Agent tool + system segment) or programmatic (`RunParallel` fan-out). |
 | `agentcore` | The public entry point: a stateful `Session` whose `Prompt` streams the loop, plus a one-shot `Run`. Wires the provider, tools, permissions, compaction, plan mode, memory, skills and hooks into one session, and optionally persists an append-only JSONL transcript so a session can be resumed (`Session.Resume`). Subagents, the coordinator, MCP and `fold` plug in through its `Options`. |
 
+## Install
+
+```bash
+go get github.com/0xmanhnv/corvid@v0.4.4-p.6
+```
+
+Name the version. `@latest` does not work yet: Go picks the highest release tag for it, `v0.4.4`, and that tag's `go.mod` still declares the module path the project had before it was renamed, so the command fails with a module path mismatch. `v0.4.4-p.5` and later declare `github.com/0xmanhnv/corvid`; they are pre-release versions, which `@latest` skips while a release tag exists. This note goes away with the first release tagged under the current module path.
+
 ## Quick start
 
 ```go
@@ -114,6 +122,8 @@ Mutating tools (Write/Edit/Bash) prompt for approval unless `-yes` is set. Suppl
 ```bash
 go test ./...
 ```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs gofmt, `go build`, `go vet` and `go test ./...` on every pull request and on pushes to `dev` and `main`. A second job runs `go test -race ./...` and does not block a merge yet: the workflow file names the two tests that are unreliable under the race detector.
 
 The suite runs offline. It covers the provider adapters over `httptest` SSE; the loop end-to-end with a scripted provider (tool execution, message threading, permission denial, max-turns, parallel reads); real tool execution in a temp dir; the permission pipeline matrix; compaction (auto-summary, circuit breaker, micro-compact); hooks (block/rewrite/Stop-gating); subagent dispatch + depth guard; the MCP client over in-memory pipes; and the docs themselves (`docs_test.go`: relative links and anchors, cited repository paths, Mermaid ids and labels).
 
