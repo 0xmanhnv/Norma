@@ -24,6 +24,14 @@ type Definition struct {
 	Tools          []string        // tool names it may use (empty = inherit all)
 	PermissionMode permission.Mode // can only tighten the parent's mode; empty = the parent's
 	MaxTurns       int
+	// ParseOutput, when set, turns the subagent's final text into a typed
+	// value: decode the JSON it was asked for, pull a verdict out of its
+	// report. The value is carried on ChildSummary.Output for the host
+	// (harness.QueryInput.OnToolResult, coordinator.Result); the model that
+	// called the Agent tool still reads the text. A parse error is carried on
+	// ChildSummary.OutputErr and does not fail the call. It is not called for
+	// a run that ended in an error.
+	ParseOutput func(finalText string) (any, error)
 }
 
 // Config wires the Agent tool.
@@ -36,7 +44,9 @@ type Config struct {
 	Hooks       harness.HookRunner
 	// Transcript, when non-nil, persists each subagent run to its own sidechain
 	// file under the parent session (whose id is read from the context). Subagent
-	// tokens are recorded there, separate from the parent's totals.
+	// tokens are recorded there, separate from the parent's totals. Where the
+	// file is comes back with the result (ChildSummary.SessionID, AgentID and
+	// TranscriptPath), so the child's whole conversation can be read later.
 	Transcript *transcript.Store
 	// ModelSettings are the cache lifetime, thinking mode and effort of every
 	// subagent request. Left zero, a subagent started from a tool call uses
@@ -121,13 +131,42 @@ func Run(ctx context.Context, cfg Config, agentType, prompt, workDir string) (st
 	return text, err
 }
 
+// RunWithSummary is Run that also returns the ChildSummary: what the run cost
+// and how it ended, where its sidechain transcript is (when cfg.Transcript is
+// set) and its typed output (when the definition has a ParseOutput). The
+// summary is filled in as far as the run got even when err is non-nil.
+func RunWithSummary(ctx context.Context, cfg Config, agentType, prompt, workDir string) (string, ChildSummary, error) {
+	def, ok := cfg.Agents[agentType]
+	if !ok {
+		return "", ChildSummary{AgentType: agentType}, fmt.Errorf("subagent: unknown agent_type %q", agentType)
+	}
+	return run(ctx, cfg, def, agentType, prompt, workDir)
+}
+
 // ChildSummary is the Data of an Agent tool result: what the subagent cost and
-// how it ended. Its usage includes the subagent's own subagents.
+// how it ended, where its conversation was recorded, and its typed output. Its
+// usage includes the subagent's own subagents.
 type ChildSummary struct {
 	AgentType string
 	Usage     llm.Usage
 	Turns     int
 	Reason    harness.TerminalReason
+
+	// The locator of the sidechain transcript, set when Config.Transcript is:
+	// SessionID is the session the run was recorded under (the parent's),
+	// AgentID names this run within it, and TranscriptPath is the file, as
+	// transcript.Store.AgentPath(SessionID, AgentID) gives it. Load it with
+	// transcript.Store.Load to read the child's whole conversation, of which
+	// the parent only ever saw the final text. All empty without a store.
+	SessionID      string
+	AgentID        string
+	TranscriptPath string
+
+	// Output is the value Definition.ParseOutput made of the final text, nil
+	// when the definition has none, the run failed, or parsing did
+	// (OutputErr then says why).
+	Output    any
+	OutputErr error
 }
 
 // SubagentUsage lets the calling run add the child's usage to its totals.
@@ -197,7 +236,10 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		if parentSID == "" {
 			parentSID = transcript.NewSessionID()
 		}
-		w := cfg.Transcript.NewWriter(parentSID, transcript.NewAgentID())
+		agentID := transcript.NewAgentID()
+		sum.SessionID, sum.AgentID = parentSID, agentID
+		sum.TranscriptPath = cfg.Transcript.AgentPath(parentSID, agentID)
+		w := cfg.Transcript.NewWriter(parentSID, agentID)
 		w.RecordMessage(seed, llm.Usage{})
 		in.Recorder = w
 	}
@@ -215,6 +257,9 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 			sum.Turns = ev.Terminal.Turns
 			sum.Reason = ev.Terminal.Reason
 		}
+	}
+	if rerr == nil && def.ParseOutput != nil {
+		sum.Output, sum.OutputErr = def.ParseOutput(final)
 	}
 	return final, sum, rerr
 }

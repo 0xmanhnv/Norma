@@ -83,7 +83,7 @@ disabled. Everything else is opt-in:
 |---|---|---|
 | WebFetch | `Options.EnableWebFetch` | Network; permission-gated; proxy / CA options. |
 | web_search | `Options.EnableWebSearch` | Pluggable backend (`WebSearchBackend`: DuckDuckGo by default, Brave, Tavily, DeepSeek). |
-| TodoWrite | `Options.Todos` | Stateful plan the host can observe via `Todos.List()`. |
+| TodoWrite | `Options.Todos` | Stateful plan the host can observe via `Todos.List()`. `tool.NewPersistentTodoStore(tool.TodoFile(path))` (or any `TodoPersister`) keeps it across a restart. Each todo may carry a free-form `Meta` map of strings the harness never interprets. |
 | AskUserQuestion | `Options.AskUser` | Pause a long task to ask a structured multiple-choice question. |
 | TaskOutput / TaskStop / TaskList / Monitor | on by default; `Options.DisableBackgroundTasks` removes them | See the [jobs guide](jobs.md). |
 | shell_open / shell_send / shell_read / shell_list / shell_close | add `tool.ShellSessionTools()` to `Options.Tools` | Interactive PTY sessions for programs that expect a terminal, such as a REPL. They need background tasks on; `AGENT_CORE_DISABLE_INTERACTIVE_SHELL` turns them off. |

@@ -62,6 +62,24 @@ func alreadyCaptured(s string) bool {
 	return strings.Contains(s, "<persisted-output>") || strings.Contains(s, "characters truncated]")
 }
 
+// SpillPointer returns the pointer Capture leaves in output it moved to a
+// spill store: the "<persisted-output>…</persisted-output>" notice, which
+// names the size of the full output and where to read it. ok is false when s
+// carries none. It lets code that shortens a tool result further (a context
+// compactor clearing old results) keep the way back to the full copy.
+func SpillPointer(s string) (pointer string, ok bool) {
+	const open, end = "<persisted-output>", "</persisted-output>"
+	i := strings.LastIndex(s, open)
+	if i < 0 {
+		return "", false
+	}
+	j := strings.Index(s[i:], end)
+	if j < 0 {
+		return "", false
+	}
+	return s[i : i+j+len(end)], true
+}
+
 // CaptureOnce is Capture with an idempotency guard: output a tool already ran
 // through Capture (so it carries a spill pointer or truncation notice) is
 // returned unchanged. This lets a single post-tool net cap every tool's output

@@ -25,8 +25,10 @@ package compaction
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/0xmanhnv/corvid/llm"
 	"github.com/0xmanhnv/corvid/tool"
@@ -108,6 +110,60 @@ type Config struct {
 	// cache, which a different model cannot do — weigh a cheaper model's price
 	// against paying for the history uncached.
 	Summarizer Summarizer
+
+	// AfterCompact, when set, is called each time a summary has been made,
+	// before the compacted view is accepted. The messages it returns are placed
+	// right after the summary (and after any skill instructions put back
+	// there), ahead of the kept tail: the first thing the model reads once the
+	// detail is gone. It is the place for what a prose summary loses and the
+	// work cannot continue without — a note on how to recover something, the
+	// current plan, a list of open items. See Compacted for what it is shown.
+	//
+	// Only user messages are used; anything else is dropped, since the view
+	// must go on reading summary (user), assistant, user, …. What is returned
+	// counts toward the size of the new view, and a view that is not smaller
+	// than the old one is thrown away, so keep it short. The messages become
+	// part of the history and of the transcript. It is called on the goroutine
+	// that called Pre or Reactive.
+	AfterCompact func(ctx context.Context, c Compacted) []llm.Message
+	// MicroStub, when set, writes the text left in place of a tool result that
+	// MicroCompact clears. It receives the result as it stands and returns the
+	// stub. Use it to keep whatever lets the content be found again — an id, a
+	// path, a locator the tool printed — in a form the host recognises. Left
+	// nil, DefaultMicroStub is used. An empty return also falls back to it. A
+	// stub that is not shorter than the result it replaces is not applied.
+	//
+	// After a session is resumed the function can be shown a result that was
+	// already cleared before the restart (its stub): return that unchanged.
+	MicroStub func(result llm.ContentBlock) string
+	// SummaryPrompt, when set, replaces the built-in summary instruction (the
+	// last message of the summary request). DefaultSummaryPrompt returns the
+	// built-in one, for a host that wants to extend it rather than replace it.
+	// The built-in summarizers send it; a custom Summarizer reads it from
+	// SummaryCall.Prompt. A replacement should keep asking for plain text and
+	// no tool calls: the request lists the session's tools.
+	SummaryPrompt string
+	// References, when set, makes a "References" section mandatory in every
+	// summary. It is called with the messages about to be summarized and
+	// returns the identifiers that must survive them: ids, paths, URLs,
+	// anything the model will need verbatim to find a thing again. The summary
+	// instruction asks the model to list them; the compactor then checks the
+	// summary and appends, under a References heading, every identifier that
+	// is not in it word for word, in the order given. The result therefore
+	// always holds all of them, whatever the model wrote.
+	References func(summarized []llm.Message) []string
+}
+
+// Compacted describes a summary that has just been made, for
+// Config.AfterCompact. The slices are the compactor's own: read, do not modify.
+type Compacted struct {
+	Trigger            string // "auto" or "reactive"
+	PreTokens          int    // size of the context the pass was decided on
+	MessagesSummarized int
+	// Summary is the summary text as it will be inserted (References included).
+	Summary string
+	// Summarized is what the summary replaces; Tail is what is kept after it.
+	Summarized, Tail []llm.Message
 }
 
 func (c *Config) defaults() {
@@ -172,6 +228,9 @@ type Compactor struct {
 	// lastErr the summarizer error behind it, if any.
 	lastReason Reason
 	lastErr    error
+	// lastRefsAdded is how many required references the most recent summary
+	// left out and the compactor appended.
+	lastRefsAdded int
 	// viewTokens is the local estimate of the view autoCompact last looked at;
 	// trippedAt is that estimate at the moment the breaker opened.
 	viewTokens int
@@ -189,6 +248,12 @@ type Compactor struct {
 	prefix    llm.CompletionRequest
 	hasPrefix bool
 	usage     llm.Usage // summary usage not yet taken
+
+	// cleared maps the tool_use ids whose results this compactor has replaced
+	// to the stub it left. A custom stub (Config.MicroStub) cannot be
+	// recognised by its text alone, so this is how a cleared result is told
+	// from a live one: the id is known and the content is still that stub.
+	cleared map[string]string
 }
 
 // New builds a Compactor. summarize may be nil to disable AutoCompact.
@@ -201,10 +266,12 @@ func New(cfg Config, summarize Summarizer) *Compactor {
 }
 
 // SetRequestPrefix tells the compactor what every model request of the run
-// starts with: its system prompt, tools and session settings, and in
-// prefix.Messages whatever the loop sends in front of the conversation. The
-// harness loop calls it when a run starts (harness.RequestPrefixAware). The
-// summarizer builds its request on it so that it reads the run's prompt cache.
+// starts with: its system prompt, tools and session settings. The harness loop
+// calls it when a run starts, and again if the tool list changes
+// (harness.RequestPrefixAware). The summarizer builds its request on it so
+// that it reads the run's prompt cache. prefix.Messages is for a caller that
+// sends messages of its own in front of the conversation; the harness loop
+// sends none.
 func (c *Compactor) SetRequestPrefix(prefix llm.CompletionRequest) {
 	c.mu.Lock()
 	c.prefix, c.hasPrefix = prefix, true
@@ -226,10 +293,11 @@ func (c *Compactor) TakeUsage() llm.Usage {
 // summaryCall builds the SummaryCall for a summary over msgs. overflowed is
 // true when the run's last request was rejected for size: the conversation
 // offered to the summarizer is then only the part being summarized.
-func (c *Compactor) summaryCall(msgs, head []llm.Message, overflowed bool) *SummaryCall {
+func (c *Compactor) summaryCall(msgs, head []llm.Message, overflowed bool, refs []string) *SummaryCall {
 	c.mu.Lock()
 	call := &SummaryCall{Prefix: c.prefix, HasPrefix: c.hasPrefix}
 	c.mu.Unlock()
+	call.Prompt = c.summaryPrompt(refs)
 	if overflowed {
 		call.Conversation = pairForReplay(head)
 	} else {
@@ -384,6 +452,8 @@ func blockChars(b llm.ContentBlock) int {
 		return len(b.Text)
 	case llm.BlockThinking:
 		return len(b.Thinking)
+	case llm.BlockRedactedThinking:
+		return len(b.Data)
 	case llm.BlockToolUse:
 		return len(b.Name) + len(b.Input)
 	case llm.BlockToolResult:
@@ -452,11 +522,11 @@ func (c *Compactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens
 
 // microPass runs one MicroCompact pass and reports it.
 func (c *Compactor) microPass(msgs []llm.Message, tok, freed int) []llm.Message {
-	before := clearedResults(msgs)
+	before := c.clearedResults(msgs)
 	out, changed := c.microCompact(msgs)
 	if changed {
 		c.emit(Event{Kind: KindMicro, Trigger: "auto", Applied: true,
-			TokensBefore: tok, TokensAfter: max(tok-freed, 0), ResultsCleared: clearedResults(out) - before})
+			TokensBefore: tok, TokensAfter: max(tok-freed, 0), ResultsCleared: c.clearedResults(out) - before})
 	}
 	return out
 }
@@ -474,6 +544,7 @@ func (c *Compactor) summaryPass(ctx context.Context, msgs []llm.Message, tok int
 		if meta, found := llm.ParseBoundaryMeta(out[llm.LastBoundaryIndex(out)]); found {
 			ev.MessagesSummarized = meta.MessagesSummarized
 		}
+		ev.ReferencesAdded = c.lastRefsAdded
 	} else {
 		ev.Reason, ev.Err = c.lastReason, c.lastErr
 	}
@@ -488,11 +559,11 @@ func (c *Compactor) emit(ev Event) {
 }
 
 // clearedResults counts the tool results MicroCompact has cleared in msgs.
-func clearedResults(msgs []llm.Message) int {
+func (c *Compactor) clearedResults(msgs []llm.Message) int {
 	n := 0
 	for _, m := range msgs {
 		for _, b := range m.Content {
-			if b.Type == llm.BlockToolResult && isCleared(b.Content) {
+			if b.Type == llm.BlockToolResult && c.isCleared(b) {
 				n++
 			}
 		}
@@ -567,9 +638,60 @@ func microClearSet(msgs []llm.Message) map[string]bool {
 	return clearSet
 }
 
+// microStub is the text a cleared result is replaced with: Config.MicroStub's,
+// or DefaultMicroStub's when there is none or it returns nothing.
+func (c *Compactor) microStub(result llm.ContentBlock) string {
+	if c.cfg.MicroStub != nil {
+		if s := c.cfg.MicroStub(result); s != "" {
+			return s
+		}
+	}
+	return DefaultMicroStub(result)
+}
+
+// microStubFirstLineMax bounds the first line DefaultMicroStub keeps.
+const microStubFirstLineMax = 120
+
+// DefaultMicroStub is the stub MicroCompact leaves in place of a cleared tool
+// result when Config.MicroStub is not set: the notice that the content was
+// cleared, then the first line of the result (up to 120 bytes), then, when the
+// output had been spilled to a store, the pointer to the full copy
+// (tool.SpillPointer). The first line is where a tool names what it returned,
+// and the pointer is how the whole of it is read again, so clearing a result
+// does not lose the way back to it. A result with no text gets the notice
+// alone.
+func DefaultMicroStub(result llm.ContentBlock) string {
+	var text string
+	for _, b := range result.Content {
+		if b.Type == llm.BlockText {
+			text += b.Text
+		}
+	}
+	if strings.HasPrefix(text, microClearedMessage) {
+		return text // already a stub
+	}
+	stub := microClearedMessage
+	first, _, _ := strings.Cut(strings.TrimLeft(text, "\r\n"), "\n")
+	first = strings.TrimSpace(first)
+	if len(first) > microStubFirstLineMax {
+		cut := microStubFirstLineMax
+		for cut > 0 && !utf8.RuneStart(first[cut]) {
+			cut--
+		}
+		first = first[:cut] + "…"
+	}
+	if first != "" {
+		stub += "\n" + first
+	}
+	if ptr, ok := tool.SpillPointer(text); ok && !strings.Contains(first, ptr) {
+		stub += "\n" + ptr
+	}
+	return stub
+}
+
 // microFreeable estimates how many tokens a MicroCompact pass over msgs would
 // free, on the same scale as count: the bodies it would clear, less the
-// placeholder left in their place. Only the working set (after the last
+// stub left in their place. Only the working set (after the last
 // boundary) counts, since that is all that is sent.
 func (c *Compactor) microFreeable(msgs []llm.Message) int {
 	clearSet := microClearSet(msgs)
@@ -579,8 +701,8 @@ func (c *Compactor) microFreeable(msgs []llm.Message) int {
 	chars := 0
 	for _, m := range llm.MessagesAfterBoundary(msgs) {
 		for _, b := range m.Content {
-			if b.Type == llm.BlockToolResult && clearSet[b.ToolUseID] && !isCleared(b.Content) {
-				if n := blockChars(b) - len(microClearedMessage); n > 0 {
+			if b.Type == llm.BlockToolResult && clearSet[b.ToolUseID] && !c.isCleared(b) {
+				if n := blockChars(b) - len(c.microStub(b)); n > 0 {
 					chars += n
 				}
 			}
@@ -592,9 +714,11 @@ func (c *Compactor) microFreeable(msgs []llm.Message) int {
 // microCompact is one MicroCompact pass: it clears the bodies of all COMPACTABLE
 // tool results except the most recent microKeepRecent, returning the (possibly
 // new) message slice and whether anything changed. Only a result's body is
-// replaced; the tool_use block and its tool_result stay paired. It is
-// non-destructive: a cleared result can be re-read. Pre decides when a pass is
-// worth running.
+// replaced, by a stub that keeps what lets the content be found again
+// (microStub); the tool_use block and its tool_result stay paired. It is
+// non-destructive: a cleared result can be re-read. A stub that would not be
+// shorter than the result is not applied. Pre decides when a pass is worth
+// running.
 func (c *Compactor) microCompact(msgs []llm.Message) ([]llm.Message, bool) {
 	clearSet := microClearSet(msgs)
 	if clearSet == nil {
@@ -605,11 +729,19 @@ func (c *Compactor) microCompact(msgs []llm.Message) ([]llm.Message, bool) {
 	for i := range out {
 		var nc []llm.ContentBlock
 		for j, b := range out[i].Content {
-			if b.Type == llm.BlockToolResult && clearSet[b.ToolUseID] && !isCleared(b.Content) {
+			if b.Type == llm.BlockToolResult && clearSet[b.ToolUseID] && !c.isCleared(b) {
+				stub := c.microStub(b)
+				if len(stub) >= blockChars(b) {
+					continue // clearing it would not make it smaller
+				}
+				if c.cleared == nil {
+					c.cleared = map[string]string{}
+				}
+				c.cleared[b.ToolUseID] = stub
 				if nc == nil {
 					nc = append([]llm.ContentBlock(nil), out[i].Content...)
 				}
-				nc[j].Content = []llm.ContentBlock{llm.TextBlock(microClearedMessage)}
+				nc[j].Content = []llm.ContentBlock{llm.TextBlock(stub)}
 				changed = true
 			}
 		}
@@ -623,8 +755,18 @@ func (c *Compactor) microCompact(msgs []llm.Message) ([]llm.Message, bool) {
 	return out, true
 }
 
-func isCleared(blocks []llm.ContentBlock) bool {
-	return len(blocks) == 1 && blocks[0].Type == llm.BlockText && blocks[0].Text == microClearedMessage
+// isCleared reports whether a tool result has already been through
+// MicroCompact: this compactor cleared it, or it carries the default notice
+// (a result cleared before a restart, or by another compactor).
+func (c *Compactor) isCleared(result llm.ContentBlock) bool {
+	blocks := result.Content
+	if len(blocks) != 1 || blocks[0].Type != llm.BlockText {
+		return false
+	}
+	if stub, ok := c.cleared[result.ToolUseID]; ok && stub == blocks[0].Text {
+		return true
+	}
+	return strings.HasPrefix(blocks[0].Text, microClearedMessage)
 }
 
 // --- AutoCompact: non-destructive boundary + summary ---
@@ -634,7 +776,7 @@ func isCleared(blocks []llm.ContentBlock) bool {
 // why. A summary is only accepted if the view it leaves is smaller than the one
 // it replaces.
 func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok int, trigger string) ([]llm.Message, bool) {
-	c.lastReason, c.lastErr = "", nil
+	c.lastReason, c.lastErr, c.lastRefsAdded = "", nil, 0
 	viewBefore := c.estimate(llm.MessagesForAPI(msgs))
 	c.viewTokens = viewBefore
 	switch {
@@ -651,7 +793,11 @@ func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok 
 		return msgs, false
 	}
 	toSummarize := contentOnly(msgs[start:tailStart])
-	call := c.summaryCall(msgs, toSummarize, trigger == "reactive")
+	var refs []string
+	if c.cfg.References != nil {
+		refs = cleanReferences(c.cfg.References(toSummarize))
+	}
+	call := c.summaryCall(msgs, toSummarize, trigger == "reactive", refs)
 	summary, err := c.summarize(context.WithValue(ctx, summaryCallKey{}, call), toSummarize)
 	c.mu.Lock()
 	c.usage.Add(call.usage)
@@ -667,6 +813,10 @@ func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok 
 		return msgs, false
 	}
 
+	// The identifiers the host said must survive are in the summary word for
+	// word, whatever the model wrote: the missing ones are appended.
+	summary, c.lastRefsAdded = ensureReferences(summary, refs)
+
 	// Skill instructions in the summarized head are lossy in the prose summary, so
 	// re-inject the latest invocation of each skill verbatim just after the summary
 	// (post-boundary → sent to the model). Retained history keeps the originals; we
@@ -681,12 +831,26 @@ func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok 
 	summaryMsg := llm.Message{Role: llm.RoleUser, Content: []llm.ContentBlock{
 		llm.TextBlock(compactContinuationPreamble + summary),
 	}}
+	// What the host wants in front of the model right after the summary.
+	var injected []llm.Message
+	if c.cfg.AfterCompact != nil {
+		for _, m := range c.cfg.AfterCompact(ctx, Compacted{
+			Trigger: trigger, PreTokens: preTok, MessagesSummarized: len(toSummarize),
+			Summary: summary, Summarized: toSummarize, Tail: msgs[tailStart:],
+		}) {
+			if m.Role == llm.RoleUser && len(m.Content) > 0 && !llm.IsBoundaryMarker(m) {
+				injected = append(injected, m)
+			}
+		}
+	}
 	// Retain everything before tailStart (non-destructive); insert the new
-	// boundary + summary (+ re-injected skills) just before the preserved recent tail.
-	out := make([]llm.Message, 0, len(msgs)+2+len(reinjected))
+	// boundary + summary (+ re-injected skills, + the host's messages) just
+	// before the preserved recent tail.
+	out := make([]llm.Message, 0, len(msgs)+2+len(reinjected)+len(injected))
 	out = append(out, msgs[:tailStart]...)
 	out = append(out, boundary, summaryMsg)
 	out = append(out, reinjected...)
+	out = append(out, injected...)
 	out = append(out, msgs[tailStart:]...)
 
 	// The point of a summary is a smaller view. One that is not (a summary as

@@ -103,6 +103,22 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 
 ### Added
 
+- Compaction hooks on `compaction.Config`: `AfterCompact` (messages placed right
+  after the summary, shown a `compaction.Compacted`), `MicroStub` (the text left in
+  place of a cleared tool result; `compaction.DefaultMicroStub` keeps the first line
+  and the spill pointer), `SummaryPrompt` (with `compaction.DefaultSummaryPrompt`)
+  and `References` (identifiers the summary must contain; missing ones are appended
+  under a References heading). `Event.ReferencesAdded`, `SummaryCall.Prompt`.
+- `tool.SpillPointer`, which finds the spill pointer in captured tool output.
+- The todo list is put back in front of the model right after a compaction.
+- `subagent.ChildSummary` carries the sidechain transcript locator (`SessionID`,
+  `AgentID`, `TranscriptPath`) and a typed `Output` / `OutputErr` from the new
+  `Definition.ParseOutput`; `subagent.RunWithSummary` returns it.
+- `coordinator.Config.Transcript` and `ParseOutput`, and `coordinator.Result.Summary`.
+- `tool.TodoPersister`, `tool.NewPersistentTodoStore`, `tool.TodoFile` and
+  `TodoStore.Err`: a todo list that survives a restart.
+- `tool.Todo.Meta`, free-form string metadata on a todo.
+
 - `harness.ReasonRefusal`, `llm.CodeRefusal`, and `Terminal.StopReason` (the
   provider's stop reason for the last model turn).
 - `tool.CodeTruncated`, the code on the error result of a tool call the output limit
@@ -137,6 +153,16 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 - The guide [Keeping the prompt cache warm](docs/guides/prompt-caching.md).
 
 ### Changed
+
+- MicroCompact leaves the cleared notice followed by the result's first line (and its
+  spill pointer, if any) instead of the bare notice. A result the stub would not
+  shorten is left as it is.
+- **Deprecated: `tool.TodoRef` (`Todo.Ref`).** Its two fields named host-specific
+  concepts. It is replaced by `Todo.Meta`, a free-form `map[string]string`; the Go
+  type and field are removed. On read, a todo with the old `"ref"` object still
+  decodes: each of its string fields becomes a `Meta` entry under the same key, so
+  stored lists and transcripts load unchanged.
+  `"ref"` is never written, and the TodoWrite schema now offers `meta`.
 
 - `transcript.Store.Load` returns the records it could read where it used to return
   an error for a corrupt line. Callers that relied on that error to detect a damaged

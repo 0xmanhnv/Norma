@@ -61,6 +61,9 @@ type Event struct {
 	TokensBefore, TokensAfter int
 	// MessagesSummarized (summary) and ResultsCleared (micro) size the pass.
 	MessagesSummarized, ResultsCleared int
+	// ReferencesAdded is how many required identifiers (Config.References) the
+	// summary did not contain and the compactor appended to it.
+	ReferencesAdded int
 }
 
 // tailHardLimit is the most the kept tail may weigh for a compaction to be
