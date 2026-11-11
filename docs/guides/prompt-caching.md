@@ -83,7 +83,9 @@ llm.NewProvider(llm.Config{Format: llm.FormatOpenAI, BaseURL: gateway, Model: mo
 ```
 
 The adapter then sends the system prompt and the marked messages as arrays of text
-parts and marks the static system prefix, the previous tail and the tail. It is off by
+parts and marks the end of the tool list, the static system prefix, the previous tail
+and the tail. Tools render first, so sessions with identical tools share that entry,
+and sessions that also share the static system prompt share the next one. It is off by
 default because a strict OpenAI-compatible endpoint rejects a field it does not know.
 
 ### Subagents
@@ -136,11 +138,12 @@ price for everything after that byte, and writes it all to the cache again.
 | What | Why it breaks | What to do |
 |---|---|---|
 | A timestamp, request id or counter in the system prompt | the system prompt is near the front of every request | put it in the user message, or after the boundary |
-| Tools added, removed or reordered mid-session | tools render first | fix the tool list for the session; to take a tool away, refuse its calls rather than hiding its schema (`Settlement.KeepToolSchemas`) |
+| Tools added, removed or reordered mid-session | tools render first | fix the tool list for the session; to take a tool away, refuse its calls rather than hiding its schema (what `Settlement.DisabledTools` does by default) |
 | Changing model, thinking mode or effort mid-session | part of the cache key | per session, see above |
 | Editing or deleting an earlier message | everything after it is new | append instead |
 | A gap longer than the cache lifetime | the entry is gone | `ConversationCacheTTL: "1h"` |
-| Per-request context placed at the start of the conversation | it sits in front of the whole history | put it at the end: `Options.WorkingFrame` is appended after the last marker, so it can change on every request for free |
+| Per-request context placed at the start of the conversation | it sits in front of the whole history | put it at the end: the system reminder and `Options.WorkingFrame` are appended to the last user message, after the last marker, so they can change on every request for free |
+| A memory index in the cached system prompt | it changes on every saved memory | with no `DynamicBoundary` of yours, the boundary is placed before the index for you |
 
 Compaction is the one thing that has to rewrite history, so it is built to do it
 rarely and in large steps:

@@ -165,9 +165,16 @@ type Options struct {
 	// mid-stream), so a run ends cleanly rather than being aborted in flight (0 = off).
 	MaxDuration time.Duration
 	// Settlement, when set with a Prompt, runs a bounded wrap-up phase when a budget
-	// (MaxTurns/MaxDuration) is hit — injecting the prompt and hiding DisabledTools —
-	// so a budget-terminated run checkpoints its findings. See harness.Settlement.
-	Settlement     *harness.Settlement
+	// (MaxTurns/MaxDuration) is hit — injecting the prompt and refusing calls to
+	// DisabledTools — so a budget-terminated run can write down what it has. See
+	// harness.Settlement.
+	Settlement *harness.Settlement
+	// StopCheck, when set, can end a run before any model call with a reason of
+	// the host's (see harness.QueryInput.StopCheck).
+	StopCheck func(ctx context.Context, st harness.RunState) *harness.StopRequest
+	// MaxTokens is the output cap of each request; 0 uses
+	// ModelSettings.MaxOutputTokens, and the adapter's default when that is 0 too
+	// (see harness.QueryInput.MaxTokens).
 	MaxTokens      int
 	Temperature    *float64
 	MaxConcurrency int
@@ -515,13 +522,22 @@ func (s *Session) warn(msg string) {
 	}
 }
 
-func (s *Session) system() []string {
+// system returns the system prompt of the next request and its cache
+// boundary. The memory index, when included, is the last segment, and it
+// changes every time a memory is saved: with no boundary of the host's, the
+// boundary goes right before it, so the segments ahead of it stay cached
+// across a save instead of being written again.
+func (s *Session) system() (segments []string, boundary int) {
 	out := append([]string(nil), s.opts.SystemPrompt...)
 	out = append(out, s.opts.AppendSystemPrompt...)
+	boundary = s.opts.DynamicBoundary
 	if s.opts.Memory != nil && s.opts.Memory.Store != nil && s.opts.Memory.IncludeIndexInPrompt {
+		if boundary <= 0 {
+			boundary = len(out)
+		}
 		out = append(out, s.opts.Memory.Store.SystemSegment())
 	}
-	return out
+	return out, boundary
 }
 
 // hookFirer is the optional host-fired subset of the hook system.
@@ -582,10 +598,11 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 	if s.opts.SystemReminderFunc != nil {
 		reminderExtra = s.opts.SystemReminderFunc()
 	}
+	system, boundary := s.system()
 	in := harness.QueryInput{
 		Provider:           s.opts.Provider,
-		System:             s.system(),
-		DynamicBoundary:    s.opts.DynamicBoundary,
+		System:             system,
+		DynamicBoundary:    boundary,
 		ModelSettings:      s.opts.ModelSettings,
 		Messages:           s.messages,
 		SystemReminder:     buildSystemReminder(reminderExtra),
@@ -598,6 +615,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		MaxTurns:           s.opts.MaxTurns,
 		MaxDuration:        s.opts.MaxDuration,
 		Settlement:         s.opts.Settlement,
+		StopCheck:          s.opts.StopCheck,
 		MaxConcurrency:     s.opts.MaxConcurrency,
 		WorkingDir:         s.opts.WorkingDir,
 		Todos:              s.opts.Todos,

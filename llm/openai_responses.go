@@ -367,6 +367,15 @@ func parseResponsesResponse(raw []byte) (Message, string, Usage, error) {
 	}
 	if r.IncompleteDetails != nil && r.IncompleteDetails.Reason == "max_output_tokens" {
 		stop = "max_tokens"
+		// A call the limit cut short has arguments that do not parse; mark it
+		// so the caller does not run it (see completeArguments).
+		for i := range blocks {
+			if blocks[i].Type != BlockToolUse {
+				continue
+			}
+			in, truncated := completeArguments(string(blocks[i].Input), stop)
+			blocks[i].Input, blocks[i].Truncated = []byte(in), truncated
+		}
 	}
 	return Message{Role: RoleAssistant, Content: blocks}, stop, usage, nil
 }

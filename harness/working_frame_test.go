@@ -58,15 +58,15 @@ func TestWorkingFrameIsFreshPerCallAndNeverStored(t *testing.T) {
 
 func TestWithWorkingFrameDoesNotTouchItsInput(t *testing.T) {
 	orig := []llm.Message{llm.UserText("go")}
-	out := withWorkingFrame(orig, "F")
+	out := withTrailingText(orig, "F")
 	if len(orig[0].Content) != 1 || len(out[0].Content) != 2 || out[0].Content[1].Text != "F" {
 		t.Fatalf("orig=%+v out=%+v", orig, out)
 	}
 	asst := []llm.Message{{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.TextBlock("x")}}}
-	if got := withWorkingFrame(asst, "F"); len(got) != 2 || got[1].Role != llm.RoleUser {
+	if got := withTrailingText(asst, "F"); len(got) != 2 || got[1].Role != llm.RoleUser {
 		t.Fatalf("no trailing user message: %+v", got)
 	}
-	if got := withWorkingFrame(orig, ""); len(got[0].Content) != 1 {
+	if got := withTrailingText(orig, ""); len(got[0].Content) != 1 {
 		t.Fatalf("an empty frame must add nothing: %+v", got)
 	}
 }

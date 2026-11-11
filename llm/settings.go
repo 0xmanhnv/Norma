@@ -25,6 +25,13 @@ type ModelSettings struct {
 	// ReasoningEffort is the reasoning effort of every request ("" inherits
 	// the provider's Config.ReasoningEffort).
 	ReasoningEffort string
+	// MaxOutputTokens is the model's declared output limit: the most tokens one
+	// response may hold. The agent loop uses it as the output cap when the
+	// host names none, never asks for more, and raises a truncated turn's cap
+	// to it and no further. 0 means unknown: the loop then sends no cap of its
+	// own and the provider adapter applies its default. It is read by the
+	// loop, not written onto a request by Apply.
+	MaxOutputTokens int
 }
 
 // Apply writes the settings onto req. Fields the settings leave empty keep

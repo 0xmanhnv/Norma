@@ -81,6 +81,12 @@ The most recent turn is kept even when it is over the budget. When that turn alo
 larger than what fits beside a summary, no summary can help: compaction reports
 `ReasonMessageExceedsBudget` and makes no model call.
 
+`Compactor.Fit(messages)` asks the same question ahead of time: it measures the fixed
+prefix (system prompt and tools) plus the most recent turn against the window and
+reports `Fits: false` when no summary can make the next request fit. Call it from
+`harness.QueryInput.StopCheck` to end such a run with `ReasonContextExhausted` instead
+of compacting in circles (see [the agent loop](agent-loop.md#ending-a-run-from-the-host)).
+
 ### Config
 
 ```go

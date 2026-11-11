@@ -19,9 +19,9 @@ import (
 const holdOrphan = `( { x=a; while [ ${#x} -lt 200000000 ]; do x="$x$x"; done; sleep 30; :; } & ) ; sleep 30; :`
 
 // forkShared allocates once and then forks five subshells that hold the same
-// pages copy-on-write. Summing per-process RSS counts those pages six times
-// (~880 MiB measured); the real footprint is ~145 MiB.
-const forkShared = `x=a; while [ ${#x} -lt 100000000 ]; do x="$x$x"; done; for i in 1 2 3 4 5; do { sleep 25; :; } & done; sleep 25; :`
+// pages copy-on-write. Summing per-process RSS counts those pages six times;
+// the real footprint is one copy.
+const forkShared = `x=a; while [ ${#x} -lt 50000000 ]; do x="$x$x"; done; for i in 1 2 3 4 5; do { sleep 120; :; } & done; sleep 120; :`
 
 // A leaker whose parent exits must still be caught. Measuring the ppid tree
 // instead of the process group loses it the moment init adopts it: the walk
@@ -47,47 +47,139 @@ func TestMemGuardCatchesOrphanedDescendant(t *testing.T) {
 // would take down ordinary multiprocessing work and tell the model to rewrite a
 // command that never leaked, so a group over the cheap bound must be confirmed
 // against Pss before it dies.
-func TestMemGuardSparesSharedPages(t *testing.T) {
-	// Between the two measures: sum(RSS) ~880 MiB is over, Pss ~145 MiB is not.
+//
+// This is the guard's decision, tested on fixed numbers: a group reading
+// 880 MiB by RSS and 145 MiB by Pss under a 400 MiB cap is spared, pass after
+// pass; the same group is killed once Pss is over the cap too, and when Pss
+// cannot be read at all. The measures themselves are checked against a real
+// forking workload in TestMemGuardSparesSharedPages.
+func TestMemGuardVerdictNeedsBothMeasures(t *testing.T) {
 	t.Setenv("AGENT_CORE_TASK_MEM_CAP", "400m")
+	cases := []struct {
+		name     string
+		rss, pss int64
+		pssOK    bool
+		wantKill bool
+	}{
+		{"shared pages: over by RSS, under by Pss", 880 << 20, 145 << 20, true, false},
+		{"exactly at the cap by Pss", 880 << 20, 400 << 20, true, false},
+		{"a real overrun: over by both", 880 << 20, 500 << 20, true, true},
+		{"Pss unreadable: RSS decides", 880 << 20, 0, false, true},
+		{"under the cap by RSS: Pss is not consulted", 300 << 20, 900 << 20, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newTestManager(t)
+			pssCalls := 0
+			m.mu.Lock()
+			m.memRSS = func(pgids []int) map[int]int64 {
+				out := map[int]int64{}
+				for _, g := range pgids {
+					out[g] = c.rss
+				}
+				return out
+			}
+			m.memPSS = func(int) (int64, bool) { pssCalls++; return c.pss, c.pssOK }
+			m.mu.Unlock()
+			task, err := m.Spawn(SpawnSpec{Command: "sleep 60"})
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			m.Background(task.ID)
+			for range 5 { // several passes with the group sitting where it is
+				m.memGuardPass()
+			}
+			info, _ := m.Get(task.ID)
+			killed := info.Status == TaskFailed && info.Reason == terminateMemory
+			if killed != c.wantKill {
+				t.Fatalf("status=%s reason=%q after 5 passes (rss=%dMiB pss=%dMiB ok=%v), want killed=%v",
+					info.Status, info.Reason, c.rss>>20, c.pss>>20, c.pssOK, c.wantKill)
+			}
+			if !c.wantKill && info.Status.Terminal() {
+				t.Fatalf("the task ended as %s/%s", info.Status, info.Reason)
+			}
+			if c.rss <= 400<<20 && pssCalls != 0 {
+				t.Fatalf("Pss was sampled %d times for a group under the cap by RSS", pssCalls)
+			}
+			m.Kill(task.ID)
+		})
+	}
+}
+
+// The measures behind that decision, on a real workload: a shell that
+// allocates once and forks five holders of the same pages reads several times
+// its footprint by RSS and about once by Pss, and a guard whose cap lies
+// between the two leaves it alone.
+//
+// Nothing here depends on how much memory the workload ends up holding on
+// this machine, or on how long it takes to get there. The guard is off while
+// the workload grows (a shell doubling a string briefly holds several copies
+// of it, which is a real footprint and not what this test is about). Once the
+// two measures have settled apart, the cap is put halfway between what was
+// measured, and the guard's passes are run directly. If the measures never
+// separate — smaps_rollup unreadable, the pages swapped out or never shared —
+// the precondition cannot be established and the test says so and skips.
+func TestMemGuardSparesSharedPages(t *testing.T) {
+	t.Setenv("AGENT_CORE_TASK_MEM_CAP", "off")
 	m := newTestManager(t)
 	task, err := m.Spawn(SpawnSpec{Command: forkShared})
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	m.Background(task.ID)
+	defer m.Kill(task.ID)
 
-	// Wait for the two measures to actually diverge: while the parent is still
-	// growing its string alone there is nothing shared yet and RSS == Pss, so
-	// polling on RSS alone would sample before the forks exist.
+	// Wait for the measures to diverge and hold still: while the parent is
+	// still growing its string alone there is nothing shared yet and RSS ==
+	// Pss, and while it forks the group changes between two reads. Two
+	// consecutive samples that agree mean the workload is at rest.
 	pgid := task.cmd.Process.Pid
-	var rss, pss int64
-	var ok bool
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		rss = pgrpRSS([]int{pgid})[pgid]
-		pss, ok = pgrpPSS(pgid)
-		if ok && rss > 400<<20 && pss < 300<<20 {
-			break
-		}
-		if info, ok := m.Get(task.ID); ok && info.Status.Terminal() {
-			t.Fatalf("task died at %s/%s before the shared allocation was resident (rss=%dMiB pss=%dMiB)",
+	separated := func(rss, pss int64, ok bool) bool {
+		return ok && pss >= 16<<20 && rss >= 3*pss
+	}
+	var rss, pss, prevPSS int64
+	var ok, settled bool
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) && !settled {
+		if info, found := m.Get(task.ID); found && info.Status.Terminal() {
+			t.Fatalf("the workload ended as %s/%s with the guard off (rss=%dMiB pss=%dMiB)",
 				info.Status, info.Reason, rss>>20, pss>>20)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
+		rss = pgrpRSS([]int{pgid})[pgid]
+		pss, ok = pgrpPSS(pgid)
+		if d := pss - prevPSS; separated(rss, pss, ok) && d < 8<<20 && d > -(8<<20) {
+			settled = true
+		}
+		prevPSS = pss
 	}
-	if !ok || rss <= 400<<20 || pss >= 400<<20 {
-		t.Skipf("workload did not land between the two measures on this host (rss=%dMiB pss=%dMiB ok=%v)", rss>>20, pss>>20, ok)
+	if !settled {
+		t.Skipf("precondition not established: the group's RSS never settled at three times its Pss on this host "+
+			"(rss=%dMiB pss=%dMiB readable=%v); shared pages cannot be told from private ones here", rss>>20, pss>>20, ok)
 	}
 
-	// Several guard passes with the group sitting over the cheap bound.
-	time.Sleep(3 * memSampleInterval)
-	info, _ := m.Get(task.ID)
-	if info.Status.Terminal() {
-		t.Fatalf("killed a group whose real footprint (%d MiB Pss) is under the %s cap; only its double-counted RSS (%d MiB) was over",
-			pss>>20, humanBytes(memCapBytes()), rss>>20)
+	// A cap halfway between the two: over by the cheap measure, under by the
+	// accurate one, with as much margin as this workload gives on each side.
+	limit := (rss + pss) / 2
+	t.Setenv("AGENT_CORE_TASK_MEM_CAP", strconv.FormatInt(limit, 10))
+	if got := memCapBytes(); got != limit {
+		t.Fatalf("cap = %d, want %d", got, limit)
 	}
-	m.Kill(task.ID)
+	for range 3 {
+		m.memGuardPass()
+		if info, _ := m.Get(task.ID); info.Status.Terminal() {
+			t.Fatalf("killed a group whose real footprint (%d MiB Pss) is under the %s cap; only its double-counted RSS (%d MiB) was over",
+				pss>>20, humanBytes(limit), rss>>20)
+		}
+	}
+
+	// And the guard is not simply idle: with the cap under the real footprint
+	// the same group is killed.
+	t.Setenv("AGENT_CORE_TASK_MEM_CAP", strconv.FormatInt(pss/2, 10))
+	m.memGuardPass()
+	if info := waitTerminalIn(t, m, task.ID, 10*time.Second); info.Status != TaskFailed || info.Reason != terminateMemory {
+		t.Fatalf("status=%s reason=%q with the cap at half the Pss, want failed/memory", info.Status, info.Reason)
+	}
 }
 
 // pgrpRSS must see every member of the group, including one the task's own

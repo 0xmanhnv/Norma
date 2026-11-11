@@ -33,28 +33,18 @@ jobs:
           fi
       - run: go build ./...
       - run: go vet ./...
-      # The suite is offline: no API keys, no network. One test here is
-      # sensitive to machine load: TestMemGuardSparesSharedPages (package tool)
-      # has failed on a heavily loaded machine without -race. If it fails
-      # here, re-run before looking for a regression.
+      # The suite is offline: no API keys, no network.
       - run: go test ./...
 
-  # The race detector, as a job of its own that does not block a merge yet.
-  # Two tests are unreliable under -race today, and this job stays non-blocking
-  # until both are fixed:
-  #   - TestSettlementOnToolOverrunsBudget (package harness) has a real data
-  #     race, which the detector reports.
-  #   - TestMemGuardSparesSharedPages (package tool) depends on how loaded the
-  #     machine is, and -race makes it slower still.
-  # A red result here is worth reading: any other test that fails under -race
-  # is a new problem. Remove continue-on-error once the two above pass.
+  # The race detector. A failure here blocks a merge like any other test.
+  # foldadapter's long-session tests take about nine minutes under -race on a
+  # hosted runner, close to go test's default ten-minute limit: hence -timeout.
   race:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-      - run: go test -race ./...
+      - run: go test -race -timeout 25m ./...

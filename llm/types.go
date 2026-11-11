@@ -94,6 +94,14 @@ type ContentBlock struct {
 	// Anthropic adapter, which marshals blocks directly, clears it), and the
 	// model sees only Content. Nil on success and on errors nothing classified.
 	ToolError *ToolError `json:"tool_error,omitempty"`
+
+	// Truncated marks a tool_use block of a non-streaming response whose
+	// arguments the output limit cut short. An adapter sets it when it parses
+	// such a response (Provider.Complete); the agent loop then answers the call
+	// with a "truncated" error instead of running it on arguments that are
+	// incomplete, as it already does for a stream. It is local to the turn: it
+	// is never encoded, so it reaches neither a provider nor a transcript.
+	Truncated bool `json:"-"`
 }
 
 // MarshalJSON encodes the block. It differs from the default encoding in one
