@@ -4,15 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 // ValidateInput checks a raw JSON input against a minimal subset of JSON Schema
-// sufficient for tool inputs: object type, required properties, and per-property
-// primitive type checks (string/number/integer/boolean/array/object). It never
-// panics; a non-nil error means the input is invalid (FR-04.5, NFR-07).
+// sufficient for tool inputs: object type, required properties, per-property
+// primitive type checks (string/number/integer/boolean/array/object) and enum
+// membership. It never panics; a non-nil error means the input is invalid (FR-04.5, NFR-07).
 func ValidateInput(schema map[string]any, raw json.RawMessage) error {
 	if schema == nil {
 		return nil
@@ -33,7 +34,7 @@ func validateValue(schema map[string]any, v any, path string) error {
 		m, ok := v.(map[string]any)
 		if !ok {
 			if typ == "" {
-				return nil
+				break // no type declared: anything goes, but an enum still applies
 			}
 			return wrongType(path, typ, v)
 		}
@@ -81,7 +82,35 @@ func validateValue(schema map[string]any, v any, path string) error {
 			}
 		}
 	}
-	return nil
+	return checkEnum(schema, v, path)
+}
+
+// checkEnum enforces a schema's "enum": the value must equal one of the listed
+// values. The list is compared as JSON, so it may be written as []any, as a
+// typed Go slice ([]string{"a", "b"}), or come decoded from a JSON schema. An
+// enum that is not a list is ignored, like any other keyword this validator
+// does not understand.
+func checkEnum(schema map[string]any, v any, path string) error {
+	raw, ok := schema["enum"]
+	if !ok || raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var allowed []any
+	if json.Unmarshal(b, &allowed) != nil {
+		return nil
+	}
+	for _, a := range allowed {
+		if reflect.DeepEqual(a, v) {
+			return nil
+		}
+	}
+	list := strings.TrimSuffix(strings.TrimPrefix(string(b), "["), "]")
+	got, _ := json.Marshal(v)
+	return fmt.Errorf("%s: must be one of %s, got %s", at(path), strings.ReplaceAll(list, ",", ", "), got)
 }
 
 func toStrings(v any) []string {
