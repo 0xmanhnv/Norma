@@ -4,12 +4,14 @@ import "github.com/0xmanhnv/corvid/llm"
 
 // RequestPrefixAware is optionally implemented by a Compactor that makes model
 // calls of its own (a summary) and wants them to share the run's prompt cache.
-// The loop calls SetRequestPrefix once when a run starts, with the request it
-// is going to send minus the conversation: the system prompt and boundary, the
-// tool list, the session settings, and in Messages whatever the loop puts in
-// front of the conversation (the system reminder). A call built on that prefix
-// and followed by the conversation reads the cache the run's own requests
-// wrote, instead of paying for the whole history as fresh input.
+// The loop calls SetRequestPrefix when a run starts, with the request it is
+// going to send minus the conversation: the system prompt and boundary, the
+// tool list and the session settings. It calls it again if the tool list
+// changes (a wrap-up that hides tools, Settlement.HideDisabledTools). The loop
+// puts nothing in front of the conversation, so Messages is empty. A call
+// built on that prefix and followed by the conversation reads the cache the
+// run's own requests wrote, instead of paying for the whole history as fresh
+// input.
 type RequestPrefixAware interface {
 	SetRequestPrefix(prefix llm.CompletionRequest)
 }
@@ -46,9 +48,6 @@ func (l *loop) announcePrefix(schemas []llm.ToolSchema) {
 		Temperature:     l.in.Temperature,
 	}
 	l.in.ModelSettings.Apply(&prefix)
-	if l.in.SystemReminder != "" {
-		prefix.Messages = []llm.Message{llm.UserText(l.in.SystemReminder)}
-	}
 	pa.SetRequestPrefix(prefix)
 }
 

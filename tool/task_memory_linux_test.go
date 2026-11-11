@@ -81,8 +81,16 @@ func TestMemGuardKillsDescendants(t *testing.T) {
 		t.Fatalf("bad pid %q: %v", b, err)
 	}
 	// The killed orphan is reparented to the container's pid 1, which may not
-	// reap it — a zombie is dead, a running process is not.
-	if st := procStatState(pid); st != "" && st != "Z" {
+	// reap it — a zombie is dead, a running process is not. A signal is
+	// delivered asynchronously: right after the kill the process can still
+	// read "R" while it exits, so give it a moment. A survivor of the kill
+	// sleeps for minutes and never gets there.
+	st := procStatState(pid)
+	for deadline := time.Now().Add(5 * time.Second); st != "" && st != "Z" && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		st = procStatState(pid)
+	}
+	if st != "" && st != "Z" {
 		t.Fatalf("descendant %d still alive, state=%q — group kill must take the whole tree", pid, st)
 	}
 }

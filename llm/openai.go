@@ -50,7 +50,9 @@ func (m oaMessage) MarshalJSON() ([]byte, error) {
 // content part:
 //
 //   - the static system prefix (req.System up to DynamicBoundary). The tool
-//     list renders before the system prompt, so this entry covers it too;
+//     list renders before the system prompt, so this entry covers it too; the
+//     tool list also gets a marker of its own (buildBody), so that sessions
+//     whose system prompts differ still share the tools;
 //   - the conversation tail: the last message this request adds that the next
 //     one sends again (the message before a volatile working frame);
 //   - the previous tail: the message before the latest assistant turn, where
@@ -134,6 +136,9 @@ type oaTool struct {
 		Description string         `json:"description"`
 		Parameters  map[string]any `json:"parameters"`
 	} `json:"function"`
+	// CacheControl ends a cacheable prefix at this tool. Only the last tool
+	// carries it, and only with Config.CacheControl.
+	CacheControl map[string]any `json:"cache_control,omitempty"`
 }
 
 type oaThinking struct {
@@ -270,6 +275,12 @@ func toOpenAIMessages(system string, msgs []Message) []oaMessage {
 			for _, b := range m.Content {
 				switch b.Type {
 				case BlockText:
+					// Several text blocks (the prompt, then a reminder or a
+					// working frame appended for this request) are paragraphs
+					// of one message, not one run-on string.
+					if text.Len() > 0 {
+						text.WriteString("\n\n")
+					}
 					text.WriteString(b.Text)
 				case BlockToolResult:
 					toolMsgs = append(toolMsgs, oaMessage{Role: "tool", ToolCallID: b.ToolUseID, Content: flattenText(b.Content)})
@@ -415,6 +426,15 @@ func (p *openaiProvider) buildBody(req CompletionRequest, stream bool) ([]byte, 
 		ot.Function.Description = t.Description
 		ot.Function.Parameters = t.InputSchema
 		body.Tools = append(body.Tools, ot)
+	}
+	// With cache control on, the end of the tool list is a breakpoint of its
+	// own, as on the Anthropic format: tools render first, so byte-identical
+	// tools are read back by any session, whatever its system prompt, and
+	// byte-identical tools and static system prompt by any session that
+	// shares both (markOpenAICache puts that second breakpoint).
+	if p.cfg.CacheControl && !req.DisableCache && len(body.Tools) > 0 {
+		stableTTL, _ := cacheTTLs(req)
+		body.Tools[len(body.Tools)-1].CacheControl = cacheControl(stableTTL)
 	}
 	return json.Marshal(body)
 }
@@ -570,6 +590,11 @@ func (p *openaiProvider) Complete(ctx context.Context, req CompletionRequest) (M
 // the neutral Message model. reasoning_content/reasoning (a reasoning model's
 // thinking) is mapped to a thinking block; content to a text block; tool_calls to
 // tool_use blocks — the same shape the streaming path accumulates.
+//
+// A response the output limit ended (finish_reason "length") can end inside a
+// tool call, whose arguments are then not valid JSON. Such a block is marked
+// Truncated and given "{}" as its input, so that the caller does not run it
+// and the message can still be encoded and replayed.
 func parseOpenAIResponse(raw []byte) (Message, string, Usage, error) {
 	var r struct {
 		Choices []struct {
@@ -615,20 +640,36 @@ func parseOpenAIResponse(raw []byte) (Message, string, Usage, error) {
 		// did answer, it just declined.
 		blocks = append(blocks, TextBlock(ch.Message.Refusal))
 	}
+	stop := mapOpenAIFinish(ch.FinishReason)
 	for _, tc := range ch.Message.ToolCalls {
-		in := tc.Function.Arguments
-		if strings.TrimSpace(in) == "" {
-			in = "{}"
-		}
+		in, truncated := completeArguments(tc.Function.Arguments, stop)
 		blocks = append(blocks, ContentBlock{
 			Type:             BlockToolUse,
 			ID:               tc.ID,
 			Name:             tc.Function.Name,
 			Input:            []byte(in),
 			ThoughtSignature: thoughtSignature(tc),
+			Truncated:        truncated,
 		})
 	}
-	return Message{Role: RoleAssistant, Content: blocks}, mapOpenAIFinish(ch.FinishReason), usage, nil
+	return Message{Role: RoleAssistant, Content: blocks}, stop, usage, nil
+}
+
+// completeArguments returns the arguments of a tool call in a non-streaming
+// response as valid JSON, and whether the output limit cut them short. Empty
+// arguments are "{}". Arguments that do not parse on a turn the limit ended
+// (stop "max_tokens") were cut: they become "{}" and truncated is true. A
+// strict prefix of a JSON object never parses, so a cut call cannot pass for
+// a complete one. Arguments that do not parse on any other turn are left as
+// the provider sent them.
+func completeArguments(args, stop string) (in string, truncated bool) {
+	if strings.TrimSpace(args) == "" {
+		return "{}", false
+	}
+	if stop == "max_tokens" && !json.Valid([]byte(args)) {
+		return "{}", true
+	}
+	return args, false
 }
 
 // thoughtSignature extracts Gemini's thought_signature from a tool_calls

@@ -243,6 +243,13 @@ type Manager struct {
 	sessMu   sync.Mutex
 	sessions map[string]*ptySession
 	sessSeq  int
+
+	// memRSS and memPSS replace the two memory measures of the guard (pgrpRSS,
+	// pgrpPSS) when set. They exist for tests, which set them under mu to
+	// drive the guard's decision with fixed numbers instead of a real
+	// allocation whose size depends on the machine.
+	memRSS func(pgids []int) map[int]int64
+	memPSS func(pgid int) (int64, bool)
 }
 
 func baseTaskDir() string { return filepath.Join(os.TempDir(), "corvid") }
@@ -529,7 +536,14 @@ func (m *Manager) memGuardPass() {
 			watched[t.cmd.Process.Pid] = t
 		}
 	}
+	rssOf, pssOf := m.memRSS, m.memPSS
 	m.mu.Unlock()
+	if rssOf == nil {
+		rssOf = pgrpRSS
+	}
+	if pssOf == nil {
+		pssOf = pgrpPSS
+	}
 	if len(watched) == 0 {
 		return
 	}
@@ -538,7 +552,7 @@ func (m *Manager) memGuardPass() {
 	for pgid := range watched {
 		pgids = append(pgids, pgid)
 	}
-	for pgid, rss := range pgrpRSS(pgids) {
+	for pgid, rss := range rssOf(pgids) {
 		if rss <= limit {
 			continue
 		}
@@ -546,7 +560,7 @@ func (m *Manager) memGuardPass() {
 		// that is over on RSS but under on Pss is re-confirmed on every later
 		// pass; that costs one accurate sample per tick for as long as it sits
 		// in the band, which is the price of not killing it.
-		if pss, ok := pgrpPSS(pgid); ok && pss <= limit {
+		if pss, ok := pssOf(pgid); ok && pss <= limit {
 			continue
 		}
 		m.terminate(watched[pgid], TaskFailed, terminateMemory)

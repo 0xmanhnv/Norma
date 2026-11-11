@@ -66,6 +66,64 @@ type Event struct {
 	ReferencesAdded int
 }
 
+// Fit says whether a conversation can still be made to fit the model's window.
+// See Compactor.Fit.
+type Fit struct {
+	// Window is the room a request has: the context window less the output
+	// reservation.
+	Window int
+	// Prefix is what every request carries besides the conversation: the
+	// system prompt and the tool schemas.
+	Prefix int
+	// Tail is the least of the conversation a compaction keeps: the most
+	// recent turn, whole. Everything before it can be summarized away.
+	Tail int
+	// Fits is false when Prefix and Tail alone fill the window. No summary can
+	// then make the next request fit: only a shorter system prompt, fewer
+	// tools or a smaller last turn would.
+	Fits bool
+}
+
+// Fit measures the part of the next request that compaction cannot shrink —
+// the fixed prefix plus the most recent turn, which is always kept — against
+// the window. All three figures are in tokens, on the compactor's own estimate
+// (Config.StaticPrefixTokens and Config.TokenCalibration when set).
+//
+// It is the question to ask before a model call when a run must not go round
+// on compactions that free nothing: a tool result larger than the window, or a
+// tool list that leaves no room, stays too large however often the rest is
+// summarized. A host ends such a run with its own reason from
+// harness.QueryInput.StopCheck:
+//
+//	StopCheck: func(_ context.Context, st harness.RunState) *harness.StopRequest {
+//		if f := compactor.Fit(st.Messages); !f.Fits {
+//			return &harness.StopRequest{Reason: harness.ReasonContextExhausted,
+//				Detail: fmt.Sprintf("prefix %d + kept tail %d exceed the window %d", f.Prefix, f.Tail, f.Window)}
+//		}
+//		return nil
+//	},
+//
+// Call it from the goroutine that drives the compactor (StopCheck runs there).
+func (c *Compactor) Fit(msgs []llm.Message) Fit {
+	f := Fit{Window: c.effectiveWindow(), Prefix: c.prefixTokens()}
+	start := llm.LastBoundaryIndex(msgs) + 1
+	cut := start
+	if start < len(msgs) {
+		split := splitsToolPair(msgs, start)
+		// The latest point a summary may end: the last assistant message that
+		// does not sit inside a tool exchange. With none, nothing can be cut.
+		for i := len(msgs) - 1; i > start; i-- {
+			if msgs[i].Role == llm.RoleAssistant && !split[i-start] && !llm.IsBoundaryMarker(msgs[i]) {
+				cut = i
+				break
+			}
+		}
+		f.Tail = c.estimate(contentOnly(msgs[cut:]))
+	}
+	f.Fits = c.cfg.ContextWindow <= 0 || f.Prefix+f.Tail < f.Window
+	return f
+}
+
 // tailHardLimit is the most the kept tail may weigh for a compaction to be
 // worth making: what is left under the summary threshold once the summary
 // itself has taken its reservation.

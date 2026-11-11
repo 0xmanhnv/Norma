@@ -26,9 +26,13 @@ type QueryInput struct {
 	// changing one between two runs of a conversation invalidates its cache.
 	ModelSettings llm.ModelSettings
 	Messages      []llm.Message // conversation including the latest user turn
-	// SystemReminder, when non-empty, is prepended as the first message on each
-	// model call. It is not stored in conversation history — the host builds it
-	// fresh per Prompt call so it never accumulates across turns.
+	// SystemReminder, when non-empty, is appended as a text block to the last
+	// user message of every model request, like WorkingFrame (and before it).
+	// It is not stored in conversation history — the host builds it fresh per
+	// Prompt call so it never accumulates across turns. It sits at the end, and
+	// not in front of the conversation, because a prompt cache matches the
+	// request from its first byte: a reminder that changed (a new date) ahead
+	// of the first message would make every request pay for the whole history.
 	SystemReminder string
 	// WorkingFrame, when non-nil, is called before every model call; a non-empty
 	// result is appended as a text block to the last user message of that
@@ -40,12 +44,24 @@ type QueryInput struct {
 	// Tracer, when non-nil, receives a span for every model call and tool call.
 	Tracer Tracer
 	Tools  *tool.Registry
+	// StopCheck, when non-nil, is called before every model call, after
+	// compaction has had its turn. Returning a StopRequest ends the run there,
+	// with the request's reason and detail on the Terminal, instead of making
+	// the call. It is how a host ends a run it knows cannot go on — the system
+	// prompt, the tools and the part of the conversation that must be kept no
+	// longer fit the model's window, a spending limit is reached — with a
+	// reason of its own rather than a provider error several turns later.
+	StopCheck func(ctx context.Context, st RunState) *StopRequest
 	// DeferredTools names tools whose schemas are withheld from the model's tool
 	// list (they stay in Tools and are invoked via ExecuteExtraTool). Empty = all
 	// tool schemas sent as usual.
 	DeferredTools []string
-	MaxTokens     int
-	Temperature   *float64
+	// MaxTokens is the output cap of each model request. 0 asks for the model's
+	// declared limit (ModelSettings.MaxOutputTokens) and, when that is unknown
+	// too, sends no cap: the provider adapter then applies its own default. A
+	// value above the declared limit is lowered to it.
+	MaxTokens   int
+	Temperature *float64
 	// MaxTurns bounds tool-turns (0 = off). MaxDuration bounds wall-clock time,
 	// checked at the turn boundary so a turn is never aborted mid-stream — unlike
 	// cancelling ctx, which cuts an in-flight stream/tool (0 = off).
@@ -140,28 +156,41 @@ type QueryInput struct {
 	// budget (output tokens), stopping early on diminishing returns.
 	TokenBudget int
 	// EscalateMaxTokens, when true, first retries a max_tokens truncation with a
-	// raised output cap (64k) before falling back to resume-recovery.
+	// raised output cap before falling back to resume-recovery. The raised cap
+	// is the model's declared output limit (ModelSettings.MaxOutputTokens); when
+	// that is unknown it is 64000. A turn already running at that cap is not
+	// retried this way.
 	EscalateMaxTokens bool
 
 	// Settlement, when non-nil with a Prompt, runs a bounded wrap-up phase the
 	// moment a budget (MaxTurns/MaxDuration) is hit: it injects Prompt as a user
-	// turn and hides DisabledTools, so a budget-terminated run can checkpoint its
-	// findings instead of ending abruptly. The run still finishes with the budget's
+	// turn and refuses calls to DisabledTools, so a budget-terminated run can
+	// write down what it has instead of ending abruptly. The run still finishes with the budget's
 	// reason (ReasonMaxTurns/ReasonTimeout), never ReasonCompleted. Nil = off.
 	Settlement *Settlement
 }
 
 // Settlement configures the wrap-up phase that runs when a budget is hit.
 type Settlement struct {
-	Prompt        string   // wrap-up instruction injected as a user turn (empty = settlement off)
-	MaxTurns      int      // turn budget for the wrap-up phase itself (0 = default 2)
-	DisabledTools []string // tool names hidden from the model during wrap-up (e.g. ["Bash"])
-	// KeepToolSchemas leaves DisabledTools in the tool list during wrap-up and
-	// refuses their calls instead. Removing a schema changes the request prefix,
-	// and with it every prompt cache over the tools and the conversation, so the
-	// wrap-up turns would re-send the whole history uncached. A refused call gets
-	// an error result naming the reason; calls through ExecuteExtraTool are
-	// checked by the target tool's name.
+	Prompt   string // wrap-up instruction injected as a user turn (empty = settlement off)
+	MaxTurns int    // turn budget for the wrap-up phase itself (0 = default 2)
+	// DisabledTools names the tools the model may not use during wrap-up (e.g.
+	// ["Bash"]). Their schemas stay in the tool list and their calls are
+	// refused: a refused call gets an error result naming the reason, and a
+	// call through ExecuteExtraTool is checked by the target tool's name.
+	// Removing a schema instead would change the request prefix, and with it
+	// every prompt cache over the tools and the conversation, so the wrap-up
+	// turns would send the whole history uncached.
+	DisabledTools []string
+	// HideDisabledTools also removes the schemas of DisabledTools from the
+	// wrap-up requests, at the price described above. Their calls are refused
+	// all the same. The Compactor is told the new tool list
+	// (RequestPrefixAware), so a summary made during wrap-up is built on the
+	// prefix the wrap-up requests really have.
+	HideDisabledTools bool
+	// KeepToolSchemas is ignored: keeping the schemas is the default.
+	//
+	// Deprecated: leave it unset; set HideDisabledTools for the old default.
 	KeepToolSchemas bool
 	// PromptByReason optionally overrides Prompt based on WHY the run settled
 	// (keyed by the terminal reason, e.g. ReasonTimeout / ReasonMaxTurns). When the
@@ -180,6 +209,33 @@ func (s *Settlement) promptFor(reason TerminalReason) string {
 		}
 	}
 	return s.Prompt
+}
+
+// RunState is what QueryInput.StopCheck is shown before a model call.
+type RunState struct {
+	// Turn is the number of the model call about to be made, from 1.
+	Turn int
+	// Messages is the conversation as it stands (the full history, boundaries
+	// included; llm.MessagesForAPI gives what would be sent). Read-only.
+	Messages []llm.Message
+	// LastInputTokens is the size the provider reported for the previous
+	// request plus its output; 0 before the first response.
+	LastInputTokens int
+	// Usage is what the run has spent so far.
+	Usage llm.Usage
+}
+
+// StopRequest ends a run from QueryInput.StopCheck.
+type StopRequest struct {
+	// Reason is the Terminal.Reason the run ends with. Empty means
+	// ReasonStopRequested. ReasonContextExhausted is the one to use when the
+	// conversation can no longer be made to fit the model's window.
+	Reason TerminalReason
+	// Detail says why, for people and logs (Terminal.Detail).
+	Detail string
+	// Err, when set, is the Terminal.Err. Left nil, a run that ends with
+	// ReasonContextExhausted gets an error carrying llm.CodeContextOverflow.
+	Err error
 }
 
 // Compactor is the harness's view of the compaction system (implemented in
@@ -309,8 +365,11 @@ type loop struct {
 	boundaryCount   int       // boundary markers already seen, so Recorder fires once each
 	startTime       time.Time // loop start, for MaxDuration (wall-clock budget)
 
-	// settlement (wrap-up) phase state, entered when a budget is hit
-	settling     bool
+	// settlement (wrap-up) phase state, entered when a budget is hit. settling
+	// is read by tool goroutines (settleRefusal) while the loop goroutine sets
+	// it, and a tool that overran the budget may still be running when it is
+	// set, hence the atomic. The other two are the loop goroutine's own.
+	settling     atomic.Bool
 	settleReason TerminalReason // the budget reason to finish with after wrap-up
 	settleTurn   int
 
@@ -319,6 +378,7 @@ type loop struct {
 	maxOutputTokensRecoveryCount int
 	hasAttemptedReactiveCompact  bool
 	stopHookActive               bool
+	stopDetail                   string // StopRequest.Detail of the request that ended the run
 	budget                       budgetTracker
 	lastContinue                 ContinueReason
 }
@@ -338,7 +398,7 @@ const (
 	budgetCompletionThresholdNum = 9 // 0.9
 	budgetCompletionThresholdDen = 10
 	budgetDiminishingThreshold   = 500
-	escalatedMaxTokens           = 64000
+	defaultEscalatedMaxTokens    = 64000 // the escalated cap when the model's limit is unknown
 	maxOutputTokensRecoveryLimit = 3
 	// maxLoopIterations is a defensive backstop; turnCount counts only tool-turns,
 	// so this only guards against a pathological recovery/continuation loop.
@@ -436,10 +496,28 @@ func countBoundaries(msgs []llm.Message) int {
 	return n
 }
 
+// finishStopped ends the run on a StopCheck request.
+func (l *loop) finishStopped(stop *StopRequest) {
+	reason, err := stop.Reason, stop.Err
+	if reason == "" {
+		reason = ReasonStopRequested
+	}
+	if err == nil && reason == ReasonContextExhausted {
+		msg := "the conversation no longer fits the model's context window"
+		if stop.Detail != "" {
+			msg += ": " + stop.Detail
+		}
+		err = llm.NewError(llm.CodeContextOverflow, msg)
+	}
+	l.stopDetail = stop.Detail
+	l.finish(reason, err, "")
+}
+
 func (l *loop) finish(reason TerminalReason, err error, text string) {
 	l.terminal = &Terminal{
 		Reason:        reason,
 		Err:           err,
+		Detail:        l.stopDetail,
 		StopReason:    l.lastStopReason,
 		Usage:         l.usage,
 		SubagentUsage: l.subagentUsage(),
@@ -450,14 +528,42 @@ func (l *loop) finish(reason TerminalReason, err error, text string) {
 	l.yield(Event{Kind: KindResult, Terminal: l.terminal}, nil)
 }
 
+// baseMaxTokens is the output cap a request carries when no escalation is in
+// force: QueryInput.MaxTokens, else the model's declared limit. It never
+// exceeds that limit when the limit is known, and is 0 when neither is: the
+// adapter then applies its own default rather than the loop guessing a number
+// the model may not accept.
+func (l *loop) baseMaxTokens() int {
+	limit := max(l.in.ModelSettings.MaxOutputTokens, 0)
+	n := l.in.MaxTokens
+	if n <= 0 || (limit > 0 && n > limit) {
+		n = limit
+	}
+	return n
+}
+
+// maxTokens is the output cap of the next request: the escalated cap while one
+// is in force, else baseMaxTokens.
 func (l *loop) maxTokens() int {
 	if l.maxOutputTokensOverride > 0 {
 		return l.maxOutputTokensOverride
 	}
-	if l.in.MaxTokens > 0 {
-		return l.in.MaxTokens
+	return l.baseMaxTokens()
+}
+
+// escalationCap is the raised output cap a truncated turn is retried with
+// (EscalateMaxTokens): the model's declared output limit, or
+// defaultEscalatedMaxTokens when that is unknown. 0 means there is nothing to
+// raise: the run already asks for as much as the model gives.
+func (l *loop) escalationCap() int {
+	target := defaultEscalatedMaxTokens
+	if limit := l.in.ModelSettings.MaxOutputTokens; limit > 0 {
+		target = limit
 	}
-	return 32768
+	if l.baseMaxTokens() >= target {
+		return 0
+	}
+	return target
 }
 
 func (l *loop) run() {
@@ -504,6 +610,13 @@ func (l *loop) run() {
 			l.messages = l.in.Compactor.Pre(l.ctx, l.messages, l.lastInputTokens)
 			l.absorbCompactionUsage()
 			l.recordNewBoundary()
+		}
+		if l.in.StopCheck != nil {
+			st := RunState{Turn: iterations, Messages: l.messages, LastInputTokens: l.lastInputTokens, Usage: l.usage}
+			if stop := l.in.StopCheck(l.ctx, st); stop != nil {
+				l.finishStopped(stop)
+				return
+			}
 		}
 
 		usageBefore := l.usage
@@ -582,7 +695,7 @@ func (l *loop) run() {
 			// "truncated" error instead of being run; with escalation on, the
 			// model retries under the raised cap, which stays until a turn fits.
 			if l.in.EscalateMaxTokens {
-				l.maxOutputTokensOverride = escalatedMaxTokens
+				l.maxOutputTokensOverride = l.escalationCap()
 			}
 		} else {
 			l.maxOutputTokensOverride = 0
@@ -592,7 +705,7 @@ func (l *loop) run() {
 			// During the wrap-up phase, a natural stop ends the run with the ORIGINAL
 			// budget reason (not "completed") — the run was budget-terminated; the
 			// settlement is just a checkpoint. Skip the keep-working nudges below.
-			if l.settling {
+			if l.settling.Load() {
 				l.finish(l.settleReason, nil, asst.Text())
 				return
 			}
@@ -648,7 +761,7 @@ func (l *loop) run() {
 		// still checkpoints its findings. Mid-tool interrupts are always time-driven
 		// (MaxTurns is only ever checked at the turn boundary), hence ReasonTimeout.
 		if aborted {
-			if l.settling {
+			if l.settling.Load() {
 				l.finish(l.settleReason, nil, "")
 				return
 			}
@@ -663,7 +776,7 @@ func (l *loop) run() {
 
 		// next_turn: only tool-turns advance turnCount.
 		l.stopHookActive = false // a real turn happened; stop hooks may fire fresh
-		if l.settling {
+		if l.settling.Load() {
 			// wrap-up phase: bounded by its own small turn budget. When spent, finish
 			// with the original budget reason (not "completed").
 			l.settleTurn++
@@ -720,9 +833,11 @@ func (l *loop) settleMaxTurns() int {
 }
 
 // beginSettlement enters the wrap-up phase when configured: injects the caller's
-// prompt as a user turn and hides DisabledTools, so a budget-terminated run can
-// checkpoint its findings. Returns false when no settlement is configured (caller
-// then finishes immediately).
+// prompt as a user turn and turns DisabledTools off (settleRefusal), so a
+// budget-terminated run can write down what it has. The tool list stays as it
+// was unless HideDisabledTools asks for the schemas to go; the Compactor is
+// then told the list the wrap-up requests carry. Returns false when no
+// settlement is configured (caller then finishes immediately).
 func (l *loop) beginSettlement(reason TerminalReason, schemas *[]llm.ToolSchema) bool {
 	s := l.in.Settlement
 	if s == nil {
@@ -735,20 +850,23 @@ func (l *loop) beginSettlement(reason TerminalReason, schemas *[]llm.ToolSchema)
 	msg := llm.UserText(prompt)
 	l.messages = append(l.messages, msg)
 	l.record(msg, llm.Usage{})
-	l.settling = true
+	l.settling.Store(true)
 	l.settleReason = reason
 	l.settleTurn = 0
-	if len(s.DisabledTools) > 0 && !s.KeepToolSchemas {
+	if len(s.DisabledTools) > 0 && s.HideDisabledTools {
 		*schemas = filterToolSchemas(*schemas, s.DisabledTools)
+		l.announcePrefix(*schemas)
 	}
 	return true
 }
 
 // settleRefusal returns the error text for a call made during wrap-up to a tool
-// the settlement disables while keeping its schema, or "" when the call may run.
+// the settlement disables, or "" when the call may run. It applies whether or
+// not the tool's schema is still listed: a model can call a tool it remembers.
+// It runs on tool goroutines.
 func (l *loop) settleRefusal(use llm.ContentBlock) string {
 	s := l.in.Settlement
-	if !l.settling || s == nil || !s.KeepToolSchemas || len(s.DisabledTools) == 0 {
+	if !l.settling.Load() || s == nil || len(s.DisabledTools) == 0 {
 		return ""
 	}
 	name := use.Name
@@ -785,8 +903,8 @@ func filterToolSchemas(schemas []llm.ToolSchema, disabled []string) []llm.ToolSc
 // handleMaxOutputTokens implements the escalate→recover(3×) flow. Returns true
 // if it injected a recovery and the loop should continue.
 func (l *loop) handleMaxOutputTokens() bool {
-	if l.in.EscalateMaxTokens && l.maxOutputTokensOverride == 0 {
-		l.maxOutputTokensOverride = escalatedMaxTokens
+	if esc := l.escalationCap(); l.in.EscalateMaxTokens && l.maxOutputTokensOverride == 0 && esc > 0 {
+		l.maxOutputTokensOverride = esc
 		l.lastContinue = ContinueMaxOutputTokensEscalate
 		return true
 	}
@@ -959,14 +1077,20 @@ func (l *loop) requestMessages() []llm.Message {
 func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exec *streamExec, stopReason string, err error, consumerStopped, aborted bool) {
 	l.maybeInjectTodoReminder()
 	msgs := l.requestMessages()
-	if l.in.SystemReminder != "" {
-		msgs = append([]llm.Message{llm.UserText(l.in.SystemReminder)}, msgs...)
-	}
+	// The reminder and the working frame ride at the very end of the request,
+	// each as one text block of the last user message, and are counted as the
+	// volatile tail: the cache breakpoint goes before them, so everything the
+	// next request sends again is read back, and neither ever sits in front of
+	// content that is.
 	volatile := 0
+	if l.in.SystemReminder != "" {
+		msgs = withTrailingText(msgs, l.in.SystemReminder)
+		volatile++
+	}
 	if l.in.WorkingFrame != nil {
 		if frame := l.in.WorkingFrame(l.ctx); frame != "" {
-			msgs = withWorkingFrame(msgs, frame)
-			volatile = 1
+			msgs = withTrailingText(msgs, frame)
+			volatile++
 		}
 	}
 	req := llm.CompletionRequest{
@@ -1118,7 +1242,18 @@ func (l *loop) completeAndExecute(req llm.CompletionRequest) (asst llm.Message, 
 			if !l.emit(Event{Kind: KindToolUse, ToolUse: &block}) {
 				return asst, exec, stopReason, nil, true, false
 			}
-			exec.add(block)
+			// A call the output limit cut short is answered, not run, exactly as
+			// on the streaming path. The adapter says so (ContentBlock.Truncated):
+			// a whole response hides what a stream shows, since the arguments of
+			// a cut call can arrive as a well-formed but incomplete object.
+			// Arguments that are not JSON at all on a max_tokens turn are the
+			// same case from a provider that does not mark it.
+			if b.Truncated || (stopReason == stopMaxTokens && !json.Valid(b.Input)) {
+				exec.truncated = true
+				exec.addRefused(block, toolFailure(block, truncatedCallText, tool.CodeTruncated))
+			} else {
+				exec.add(block)
+			}
 			if !exec.drain() { // surface any results ready so far (FIFO)
 				return asst, exec, stopReason, nil, true, false
 			}
@@ -1181,10 +1316,10 @@ func jsonValid(s string) bool {
 	return depth == 0 && !inStr
 }
 
-// withWorkingFrame appends frame as a text block to the request's last user
+// withTrailingText appends frame as a text block to the request's last user
 // message, copying so the loop's history is never touched. With no trailing user
-// message it adds one.
-func withWorkingFrame(msgs []llm.Message, frame string) []llm.Message {
+// message it adds one. It carries the system reminder and the working frame.
+func withTrailingText(msgs []llm.Message, frame string) []llm.Message {
 	if frame == "" {
 		return msgs
 	}

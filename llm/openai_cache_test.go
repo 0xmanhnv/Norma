@@ -70,11 +70,12 @@ func TestOpenAINoCacheControlByDefault(t *testing.T) {
 }
 
 // With Config.CacheControl the markers sit where the Anthropic adapter puts
-// them: the static system prefix, the previous tail and the tail.
+// them: the end of the tool list, the static system prefix, the previous tail
+// and the tail.
 func TestOpenAICacheControlMarksSameBoundaries(t *testing.T) {
 	body, msgs := oaBody(t, Config{CacheControl: true}, toolLoop())
-	if n := strings.Count(body, `"cache_control"`); n != 3 {
-		t.Fatalf("%d markers, want 3 (system prefix, previous tail, tail): %s", n, body)
+	if n := strings.Count(body, `"cache_control"`); n != 4 {
+		t.Fatalf("%d markers, want 4 (tools, system prefix, previous tail, tail): %s", n, body)
 	}
 	// system: two parts, the static one marked, the dynamic one not.
 	sys := msgs[0]["content"].([]any)
@@ -127,13 +128,13 @@ func TestOpenAICacheControlTTLAndDisable(t *testing.T) {
 	req := toolLoop()
 	req.ConversationCacheTTL = "1h"
 	body, _ := oaBody(t, Config{CacheControl: true}, req)
-	if n := strings.Count(body, `"ttl":"1h"`); n != 3 {
-		t.Fatalf("%d one-hour markers, want 3: %s", n, body)
+	if n := strings.Count(body, `"ttl":"1h"`); n != 4 {
+		t.Fatalf("%d one-hour markers, want 4: %s", n, body)
 	}
 	req.ConversationCacheTTL, req.CacheTTL = "", "1h"
 	body, _ = oaBody(t, Config{CacheControl: true}, req)
-	if n := strings.Count(body, `"ttl":"1h"`); n != 1 {
-		t.Fatalf("%d one-hour markers, want 1 (system only): %s", n, body)
+	if n := strings.Count(body, `"ttl":"1h"`); n != 2 {
+		t.Fatalf("%d one-hour markers, want 2 (tools and system): %s", n, body)
 	}
 	req.DisableCache = true
 	if body, _ = oaBody(t, Config{CacheControl: true}, req); strings.Contains(body, "cache_control") {

@@ -111,7 +111,8 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 //     assistant turn, which is where the previous request put its tail. Marking
 //     it again guarantees the read, whatever the provider's lookback window.
 //
-// Thinking blocks can't carry a breakpoint; the mark moves to the block before.
+// Thinking blocks, redacted ones included, can't carry a breakpoint; the mark
+// moves to the block before.
 // Together with the tools and system breakpoints this stays within Anthropic's
 // limit of four. ttl is the lifetime of both marks ("" for the default).
 func anthropicMessages(msgs []Message, cache bool, volatile int, ttl string) ([]json.RawMessage, error) {
@@ -120,7 +121,7 @@ func anthropicMessages(msgs []Message, cache bool, volatile int, ttl string) ([]
 	if cache {
 		cacheable := func(p pos) bool {
 			t := msgs[p.m].Content[p.b].Type
-			return t != BlockThinking
+			return t != BlockThinking && t != BlockRedactedThinking
 		}
 		// stableBefore walks back from the block before (m, b), skipping skip
 		// blocks and anything that can't carry a mark.
@@ -305,7 +306,12 @@ func (p *anthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 
 // parseAnthropicResponse decodes a non-streaming Messages API response into the
 // neutral Message model. Anthropic already speaks the content-block shape, so
-// text/thinking/tool_use blocks map across directly.
+// text, thinking, redacted_thinking and tool_use blocks map across directly.
+//
+// A response the output limit ended (stop_reason "max_tokens") whose last
+// block is a tool call was cut inside that call: its input arrives as a
+// well-formed object holding only the arguments that were complete. The block
+// is marked Truncated so the caller does not run it.
 func parseAnthropicResponse(raw []byte) (Message, string, Usage, error) {
 	var r struct {
 		Type    string `json:"type"`
@@ -314,6 +320,7 @@ func parseAnthropicResponse(raw []byte) (Message, string, Usage, error) {
 			Text      string          `json:"text"`
 			Thinking  string          `json:"thinking"`
 			Signature string          `json:"signature"`
+			Data      string          `json:"data"`
 			ID        string          `json:"id"`
 			Name      string          `json:"name"`
 			Input     json.RawMessage `json:"input"`
@@ -348,6 +355,8 @@ func parseAnthropicResponse(raw []byte) (Message, string, Usage, error) {
 			}
 		case "thinking":
 			blocks = append(blocks, ContentBlock{Type: BlockThinking, Thinking: b.Thinking, Signature: b.Signature})
+		case "redacted_thinking":
+			blocks = append(blocks, ContentBlock{Type: BlockRedactedThinking, Data: b.Data})
 		case "tool_use":
 			in := b.Input
 			if len(in) == 0 {
@@ -355,6 +364,9 @@ func parseAnthropicResponse(raw []byte) (Message, string, Usage, error) {
 			}
 			blocks = append(blocks, ContentBlock{Type: BlockToolUse, ID: b.ID, Name: b.Name, Input: in})
 		}
+	}
+	if n := len(blocks); r.StopReason == "max_tokens" && n > 0 && blocks[n-1].Type == BlockToolUse {
+		blocks[n-1].Truncated = true
 	}
 	return Message{Role: RoleAssistant, Content: blocks}, r.StopReason, usage, nil
 }
@@ -366,6 +378,7 @@ func parseAnthropicFrame(data string) (StreamEvent, bool, error) {
 			Type string `json:"type"`
 			ID   string `json:"id"`
 			Name string `json:"name"`
+			Data string `json:"data"`
 		} `json:"content_block"`
 		Delta struct {
 			Type        string `json:"type"`
@@ -405,8 +418,12 @@ func parseAnthropicFrame(data string) (StreamEvent, bool, error) {
 			return StreamEvent{Type: SEMessageStart, Usage: u}, true, nil
 		}
 	case "content_block_start":
-		if f.ContentBlock.Type == "tool_use" {
+		switch f.ContentBlock.Type {
+		case "tool_use":
 			return StreamEvent{Type: SEToolUseStart, ToolID: f.ContentBlock.ID, ToolName: f.ContentBlock.Name}, true, nil
+		case "redacted_thinking":
+			// The whole block arrives in its start frame; it has no deltas.
+			return StreamEvent{Type: SERedactedThinking, Text: f.ContentBlock.Data}, true, nil
 		}
 	case "content_block_delta":
 		switch f.Delta.Type {
@@ -462,9 +479,9 @@ func (u anthropicUsage) norm() Usage {
 }
 
 // filterThinkingBlocks normalizes message history before it is sent to the
-// Anthropic Messages API. It strips thinking-type content blocks when thinking
-// is disabled (Anthropic rejects replayed thinking blocks without the thinking
-// parameter enabled), and drops any message left with no content blocks —
+// Anthropic Messages API. It strips thinking and redacted_thinking content
+// blocks when thinking is disabled (Anthropic rejects replayed reasoning blocks
+// without the thinking parameter enabled), and drops any message left with no content blocks —
 // Anthropic rejects an empty content array. An empty message arrives here two
 // ways: a thinking-only turn that collapses to empty once thinking is stripped,
 // or an empty/truncated assistant turn (only reasoning, or nothing) that was
@@ -488,7 +505,7 @@ func filterThinkingBlocks(msgs []Message, thinkingEnabled bool) []Message {
 		if !thinkingEnabled {
 			filtered := make([]ContentBlock, 0, len(content))
 			for _, b := range content {
-				if b.Type != BlockThinking {
+				if b.Type != BlockThinking && b.Type != BlockRedactedThinking {
 					filtered = append(filtered, b)
 				}
 			}

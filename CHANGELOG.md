@@ -7,6 +7,26 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 
 ### Fixed
 
+- **Data race in the wrap-up phase.** The loop set its "settling" state while a tool
+  goroutine that had overrun `MaxDuration` could still be reading it. The state is
+  now atomic, and the race detector job in CI blocks a merge.
+- **The system reminder no longer breaks the cached prefix.** It was sent as the
+  first message of every request, so a reminder that changed (a new date) moved the
+  start of the conversation and every request paid for the whole history again. It
+  is now appended as a text block to the last user message, before the working
+  frame, and both are counted as the volatile tail that the cache marker skips.
+- **The memory index stays out of the cached system prompt.** With
+  `MemoryOptions.IncludeIndexInPrompt` and no `DynamicBoundary` of the host's, the
+  index (which changes on every saved memory) was part of the cached prefix. The
+  boundary is now placed right before it.
+- **`redacted_thinking` blocks from the Anthropic adapter.** They are kept when
+  parsing a whole response, emitted as `SERedactedThinking` when streaming, stripped
+  together with thinking blocks when thinking is off, and never carry a cache marker.
+- **A non-streaming tool call cut off by the output limit is not run.** On a whole
+  response the arguments of a cut call can arrive incomplete yet well-formed. The
+  adapters (Anthropic, OpenAI Chat Completions, OpenAI Responses) now mark such a
+  call `ContentBlock.Truncated`, and the loop answers it with a `truncated` error, as
+  it already did when streaming.
 - **A stream that breaks mid-turn no longer runs a half-received tool call.** When
   the model stream failed part-way through a tool call, that call was run with empty
   arguments, the tool calls that had already run were dropped from the conversation,
@@ -118,7 +138,25 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 - `tool.TodoPersister`, `tool.NewPersistentTodoStore`, `tool.TodoFile` and
   `TodoStore.Err`: a todo list that survives a restart.
 - `tool.Todo.Meta`, free-form string metadata on a todo.
-
+- `QueryInput.StopCheck` (`agentcore.Options.StopCheck`), `harness.RunState` and
+  `harness.StopRequest`: a host can end a run before a model call with a reason of
+  its own, for instance when the system prompt, the tools and the part of the
+  conversation that must be kept no longer fit the window and no compaction can
+  help. New terminal reasons `stop_requested` and `context_exhausted` (the latter
+  with an error carrying `llm.CodeContextOverflow`), and `Terminal.Detail` for the
+  explanation.
+- `compaction.Compactor.Fit` and `compaction.Fit`: whether the fixed prefix plus the
+  most recent turn (what a compaction always keeps) still fit the window. The
+  question to ask in a `StopCheck`.
+- `llm.ModelSettings.MaxOutputTokens`, the model's declared output limit. It is the
+  output cap when `MaxTokens` is 0, the ceiling for an explicit `MaxTokens`, and the
+  target of `EscalateMaxTokens`.
+- `llm.ContentBlock.Truncated` (never encoded).
+- `harness.Settlement.HideDisabledTools`, to remove the disabled tools' schemas
+  during wrap-up as before. The compactor is then told the new request prefix.
+- With `llm.Config.CacheControl`, the OpenAI format also marks the end of the tool
+  list, so sessions with identical tools share that entry whatever their system
+  prompt.
 - `harness.ReasonRefusal`, `llm.CodeRefusal`, and `Terminal.StopReason` (the
   provider's stop reason for the last model turn).
 - `tool.CodeTruncated`, the code on the error result of a tool call the output limit
@@ -129,7 +167,7 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 - `transcript.Store.SetSync`, to fsync the transcript after every append.
 - `llm.BlockRedactedThinking`, `ContentBlock.Data` and `llm.SERedactedThinking`: the
   message model and the stream accumulator carry a `redacted_thinking` block and
-  encode it unchanged. The Anthropic adapter does not produce these blocks yet.
+  encode it unchanged.
 - `tool.Output.Err()`.
 
 - `llm.ModelSettings` on `agentcore.Options`, `harness.QueryInput`,
@@ -163,7 +201,21 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
   decodes: each of its string fields becomes a `Meta` entry under the same key, so
   stored lists and transcripts load unchanged.
   `"ref"` is never written, and the TodoWrite schema now offers `meta`.
-
+- **The default output cap.** The loop used to send `max_tokens` 32768 whatever the
+  model. With neither `MaxTokens` nor `ModelSettings.MaxOutputTokens` set it now sends
+  0 and the adapter applies its default: 8192 on the Anthropic format (which
+  requires the field), no field at all on the OpenAI format. Set one of the two to
+  keep a larger cap. `EscalateMaxTokens` raises the cap to the declared limit, or to
+  64000 when it is unknown, and does nothing when the run already asks for that much.
+- **Wrap-up keeps the tool schemas.** `Settlement.DisabledTools` now leaves the tools
+  in the list and refuses their calls (what `KeepToolSchemas` used to opt into), so
+  the wrap-up turns still read the prompt cache. `KeepToolSchemas` is deprecated and
+  ignored; set `HideDisabledTools` for the old behaviour.
+- The request prefix given to a `RequestPrefixAware` compactor no longer carries the
+  system reminder in `Messages` (it is empty).
+- On the OpenAI format, several text blocks of one user message are joined with a
+  blank line; they used to be concatenated with nothing between them.
+- The race detector job in CI is blocking.
 - `transcript.Store.Load` returns the records it could read where it used to return
   an error for a corrupt line. Callers that relied on that error to detect a damaged
   transcript should call `LoadReport` and inspect what was skipped.

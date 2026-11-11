@@ -67,7 +67,8 @@ Three principles are wired into the structure and worth stating up front:
 
 - **The host owns the prompt.** The SDK injects no preset system prompt; it only
   ever adds a small `<system-reminder>` carrying the current date plus anything the
-  host opts into (`agentcore.buildSystemReminder`). Scenario prompts live in
+  host opts into (`agentcore.buildSystemReminder`), appended to the last user
+  message of each request so it never moves the cached prefix. Scenario prompts live in
   `examples/`, never in the core.
 - **Tools fail closed.** A tool built through `tool.Build` defaults to *not*
   read-only, *not* concurrency-safe, and *approval-required* (`tool/tool.go`). A

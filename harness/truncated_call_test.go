@@ -38,7 +38,7 @@ func TestTruncatedToolCallIsNotRun(t *testing.T) {
 		{"cut mid-arguments", cutToolTurn("c1", "Write", `{"path":"a","content":"very long`, "max_tokens"), false,
 			[]string{`{"path":"a"}`}, true, 1000},
 		{"cut mid-arguments, escalation on", cutToolTurn("c1", "Write", `{"path":"a","content":"very long`, "max_tokens"), true,
-			[]string{`{"path":"a"}`}, true, escalatedMaxTokens},
+			[]string{`{"path":"a"}`}, true, defaultEscalatedMaxTokens},
 		{"second of two calls cut", append([]llm.StreamEvent{
 			{Type: llm.SEToolUseStart, ToolID: "c0", ToolName: "Write"},
 			{Type: llm.SEToolInputJSON, Text: `{"path":"z"}`},

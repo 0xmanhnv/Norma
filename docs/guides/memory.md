@@ -41,7 +41,9 @@ memories relevant to the task and write new ones. With `AutoInject`, `Session.Pr
 picks the memories most relevant to each prompt (`Store.Relevant`) and appends them,
 rendered by `memory.RenderForInjection`, to the user's message. The index can also be
 surfaced as a system-prompt segment so the model knows what it has stored even before
-recalling.
+recalling. The index is the last segment and changes whenever a memory is saved, so
+when you set no `DynamicBoundary` the cache boundary is placed right before it: the
+rest of the system prompt stays cached across a save.
 
 ## Relevance and staleness
 

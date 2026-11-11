@@ -48,6 +48,12 @@ const (
 	ReasonMaxTurns          TerminalReason = "max_turns"           // hit MaxTurns
 	ReasonTimeout           TerminalReason = "timeout"             // hit a wall-clock run budget (host-imposed)
 	ReasonConsumerStopped   TerminalReason = "consumer_stopped"    // the caller stopped reading the event stream (OnExit only)
+	ReasonStopRequested     TerminalReason = "stop_requested"      // QueryInput.StopCheck ended the run (Terminal.Detail says why)
+	// ReasonContextExhausted: the host's StopCheck found that the conversation
+	// can no longer be made to fit the model's window — what must be kept (the
+	// system prompt, the tools, the most recent turn) is by itself too large,
+	// so no compaction can help. Terminal.Err carries llm.CodeContextOverflow.
+	ReasonContextExhausted TerminalReason = "context_exhausted"
 )
 
 // ContinueReason names why the loop took another turn. These drive control
@@ -68,6 +74,9 @@ const (
 type Terminal struct {
 	Reason TerminalReason
 	Err    error
+	// Detail is the explanation a StopRequest gave (QueryInput.StopCheck);
+	// empty for every other way a run ends.
+	Detail string
 	// StopReason is the stop reason the provider gave for the last model turn
 	// that finished ("end_turn", "tool_use", "max_tokens", "refusal", …), as the
 	// adapter normalized it. Empty when no model turn finished.
