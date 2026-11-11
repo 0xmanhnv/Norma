@@ -19,7 +19,9 @@ architecture overview or a per-subsystem guide.
 4. [Permissions guide](guides/permissions.md) — the safety boundary you configure.
 5. [Compaction guide](guides/compaction.md) — keeping a long conversation inside the
    context window.
-6. The runnable [`examples/`](../examples/) — six scenarios wired end to end.
+6. [Prompt caching guide](guides/prompt-caching.md) — keeping a long conversation
+   cheap.
+7. The runnable [`examples/`](../examples/) — six scenarios wired end to end.
 
 **If you want to *understand or contribute to* Corvid:**
 
@@ -48,6 +50,7 @@ One page per major subsystem. Deep but accurate; each cites the code.
 | [Tools](guides/tools.md) | `tool` | The `CoreTool` contract, fail-closed defaults, the built-in set, output caps and spill stores, typed output, deferred tools. |
 | [Permissions](guides/permissions.md) | `permission` | Decisions, the six modes, deny-priority, the four-stage pipeline, rule syntax. |
 | [Compaction](guides/compaction.md) | `compaction`, `fold` | Non-destructive context management; built-in vs model-driven. |
+| [Prompt caching](guides/prompt-caching.md) | `llm`, `harness`, `compaction` | Keeping the prompt cache warm: what is marked, session settings, what breaks the cache, reading usage, retries. |
 | [Subagents](guides/subagents.md) | `subagent`, `coordinator` | Context-isolated delegation and multi-agent coordination. |
 | [MCP](guides/mcp.md) | `mcp` | External and in-process Model Context Protocol tools. |
 | [Skills](guides/skills.md) | `skill` | Named instruction packages that survive compaction. |

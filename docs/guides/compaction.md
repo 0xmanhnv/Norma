@@ -29,43 +29,131 @@ from `Compactor.Pre` / `Reactive` (`compaction/compaction.go`):
 flowchart TD
     Pre([Pre]) --> M{"> 60% of effective<br/>window?"}
     M -->|no| Send[send as-is]
-    M -->|yes| Micro["MicroCompact — clear old<br/>compactable tool results<br/>(keep most recent 5)"]
-    Micro --> A{≥ threshold or<br/>predictively over?}
-    A -->|no| Send
-    A -->|yes| Auto["AutoCompact — summarize the<br/>working head behind a boundary"]
+    M -->|yes| Due{summary due?<br/>at threshold or<br/>predictively over}
+    Due -->|no| Batch{"old tool results<br/>≥ MicroMinFree?"}
+    Batch -->|no| Send
+    Batch -->|yes| Micro["MicroCompact — clear every old<br/>compactable tool result at once<br/>(keep most recent 5)"]
+    Due -->|yes| Enough{"clearing is a full batch<br/>and gets back under<br/>the threshold?"}
+    Enough -->|yes| Micro
+    Enough -->|no| Auto["AutoCompact — summarize the<br/>head behind a boundary,<br/>over the unedited history"]
+    Auto --> Small{view smaller?}
+    Small -->|no| Reject[summary thrown away]
     Auto --> Trip{3 summarizer<br/>failures?}
-    Trip -->|yes| CB[circuit breaker trips]
-    Overflow([413 overflow]) --> React[Reactive — one forced<br/>AutoCompact, retry once]
+    Trip -->|yes| CB["circuit breaker opens;<br/>half-open after a cool-down<br/>or enough growth"]
+    Overflow([overflow error]) --> React[Reactive — one forced<br/>AutoCompact, retry once]
 ```
 
 - **MicroCompact** clears the bodies of stale *compactable* tool results — file reads,
-  shell, grep/glob, web, edit/write — keeping the most recent five. It runs once the
+  shell, grep/glob, web, edit/write — keeping the most recent five. It can run once the
   context passes 60% of the effective window (the window minus the summary
-  reservation). A cleared result can be re-read, so nothing is lost.
+  reservation), but only **in batches**: a pass waits until clearing everything old
+  frees at least `MicroMinFree` tokens, clears it all at once, and leaves the history
+  byte-identical until the next pass. Editing an earlier message makes the provider
+  bill everything after it as new input, so one result per turn would cost more than it
+  saves (see [prompt caching](prompt-caching.md)). A cleared result keeps its
+  `tool_use` / `tool_result` pair and can be re-read, so nothing is lost.
 - **AutoCompact** summarizes the messages between the last boundary and the preserved
   recent tail, inserts a `compact_boundary` marker plus the summary, and retains
   everything before it. Only messages after the last boundary are sent to the model.
   Thresholds derive from the window minus a summary reservation and a tiered buffer;
-  a predictive check compacts *before* the next turn would overflow.
+  a predictive check compacts *before* the next turn would overflow. A summary that
+  does not make the view smaller is thrown away and the history left as it was.
 - **Reactive** handles an overflow error by forcing one AutoCompact and retrying the
-  turn exactly once.
+  turn exactly once. If Pre has just rejected a summary on the same turn, it does not
+  ask for a second one.
 - A **circuit breaker** (`maxAutoCompactFails = 3`) stops retrying a summarizer that
-  keeps failing, so a broken summarizer degrades gracefully instead of looping.
+  keeps failing. It is not permanent: after `BreakerCooldown`, or once the
+  conversation has grown by `BreakerRegrowth` tokens, one summary is tried again;
+  success closes the breaker.
+
+### The kept tail
+
+The tail AutoCompact preserves is a **token budget cut at turn boundaries**, not a
+message count. It is the longest run of recent turns that fits `KeepRecentTokens` (and
+at most `KeepRecent` messages), and it always:
+
+- starts on an assistant message, so the view after the boundary reads summary (user),
+  assistant, user, … with roles alternating;
+- keeps a `tool_use` on the same side of the cut as all of its `tool_result`s, parallel
+  calls included.
+
+The most recent turn is kept even when it is over the budget. When that turn alone is
+larger than what fits beside a summary, no summary can help: compaction reports
+`ReasonMessageExceedsBudget` and makes no model call.
 
 ### Config
 
 ```go
 compaction.Config{
-    ContextWindow:   200000, // model window in tokens (default 200000)
-    MaxOutputTokens: 8000,   // summary reservation is min(MaxOutputTokens, 20000) (default 8000)
-    KeepRecent:      8,      // recent messages AutoCompact never summarizes (default 8)
+    ContextWindow:    200000, // model window in tokens (default 200000)
+    MaxOutputTokens:  8000,   // summary reservation is min(MaxOutputTokens, 20000) (default 8000)
+    KeepRecent:       8,      // most messages the kept tail may hold (default 8)
+    KeepRecentTokens: 0,      // token budget of the kept tail (default: a fifth of the effective window)
+    MicroMinFree:     0,      // least a MicroCompact pass must free (default: a tenth of the effective window)
+    BreakerCooldown:  0,      // time before a tripped breaker is tried again (default 5 minutes)
+    BreakerRegrowth:  0,      // or growth, in tokens, before it is tried again (default: a tenth of the effective window)
+    StaticPrefixTokens: 0,    // measured size of system prompt + tool schemas (default: estimated)
+    TokenCalibration:   0,    // tokens = characters/4 × this (default 4/3, or learned from usage)
+    Summarizer:       nil,    // replaces the session's summarizer (see below)
+    OnEvent:          nil,    // called for every pass and every skipped pass
 }
 ```
 
-The summaries are written by the session's own `Provider` (`compaction.ProviderSummarizer`).
 AutoCompact fires at the effective window minus a buffer of 13k tokens (30k from a
 400k effective window, 50k from 800k), or earlier when the next turn could add more
 than the summary reservation plus 15k tokens and overflow.
+
+### Who writes the summary
+
+By default the session's own `Provider` does (`compaction.ProviderSummarizer`), and
+the request is built **on the run's own prefix**: the same tools and system prompt,
+the conversation as the next turn would send it, and the instruction to summarize as
+the last message. Because that request starts with exactly what the previous turn
+sent, the provider reads the history from its prompt cache instead of billing it as
+new input. The tools are listed only to keep the prefix identical; the instruction
+forbids calling them, and a reply with no text in it is retried, never used.
+
+What the summary cost is added to the run's usage (`Compactor.TakeUsage`).
+
+To summarize with a different, cheaper model:
+
+```go
+compaction.Config{
+    Summarizer: compaction.StandaloneSummarizer(cheapProvider, 8000, false),
+}
+```
+
+A standalone summary carries its own short system prompt, no tools, only the part
+being summarized, and no cache markers. It cannot read the session's cache — a cache
+belongs to one model — so weigh the cheaper price against paying for that input in
+full.
+
+### Knowing what happened
+
+`Config.OnEvent` receives a `compaction.Event` for every pass, whether `Pre` decided
+it (`Trigger: "auto"`) or `Reactive` was asked for it (`"reactive"`), with
+`TokensBefore`, `TokensAfter`, and how much was summarized or cleared. A pass that was
+due and did not happen is reported too, with a `Reason`:
+
+| Reason | Meaning |
+|---|---|
+| `no_summarizer` | no summarizer is configured |
+| `breaker_open` | the summarizer failed repeatedly and is being rested |
+| `nothing_to_summarize` | everything since the last boundary is in the kept tail |
+| `message_exceeds_budget` | cannot compact: one message exceeds the budget |
+| `summary_failed` | the summarizer returned an error (`Event.Err`) |
+| `summary_not_smaller` | the summary did not shrink the view and was thrown away |
+| `summary_rejected_this_turn` | a summary was already thrown away on this turn |
+| `cancelled` | the run's context ended during the summary |
+
+### Counting tokens
+
+The provider's reported usage is used whenever a response carried it. Otherwise the
+size is estimated locally as characters / 4 × a calibration factor, plus the static
+prefix (system prompt and tool schemas). The factor defaults to 4/3 and is learned
+from reported usage as the session goes; set `TokenCalibration` for content that is
+dense from the first request (hex, base64, JSON run near 2), and `StaticPrefixTokens`
+if you have measured your tools and system prompt.
 
 ### Skills survive boundaries
 
@@ -114,7 +202,7 @@ skipped.
 ## Choosing
 
 - **Built-in compaction** needs no extra tool and no archive; summaries are written by
-  your provider automatically. Good default.
+  your provider automatically, over the session's cached prefix. Good default.
 - **Model-driven (`fold`)** gives the model explicit control over what to keep and
   requires a durable archive directory; choose it when you want the agent itself to
   curate its context and you can host the archive.

@@ -315,12 +315,14 @@ Three mechanisms run from `Compactor.Pre` (and `Reactive`) in `compaction/compac
 flowchart TD
     Pre([Compactor.Pre]) --> Micro{"tokens > 60% of<br/>effective window?"}
     Micro -->|no| Keep[send as-is]
-    Micro -->|yes| MC["MicroCompact:<br/>clear old compactable tool results<br/>(keep most recent 5)"]
-    MC --> Auto{tokens ≥ threshold<br/>or predictively over?}
-    Auto -->|no| Keep
-    Auto -->|yes| AC["AutoCompact:<br/>summarize working head,<br/>insert boundary + summary"]
+    Micro -->|yes| Due{summary due?}
+    Due -->|no| Batch{"old results ≥<br/>MicroMinFree?"}
+    Batch -->|no| Keep
+    Batch -->|yes| MC["MicroCompact:<br/>clear every old compactable<br/>tool result in one pass<br/>(keep most recent 5)"]
+    Due -->|"yes, and a batch<br/>clear is enough"| MC
+    Due -->|yes| AC["AutoCompact:<br/>summarize the head,<br/>insert boundary + summary"]
     AC --> Trip{summarizer failed<br/>3× in a row?}
-    Trip -->|yes| Breaker[circuit breaker trips:<br/>stop trying to summarize]
+    Trip -->|yes| Breaker["circuit breaker opens;<br/>half-open after a cool-down<br/>or enough growth"]
 
     Overflow([prompt-too-long error]) --> Reactive["Reactive:<br/>force one AutoCompact, retry once"]
 ```
@@ -328,16 +330,25 @@ flowchart TD
 - **MicroCompact** clears the bodies of stale *compactable* tool results
   (file reads, shell, grep/glob, web, edit/write), keeping the most recent five, once
   the context passes 60% of the effective window (the window minus the summary
-  reservation). It is non-destructive: a cleared result can be re-read.
+  reservation). It works in batches: a pass runs only when it frees at least
+  `Config.MicroMinFree`, and the history is byte-stable between passes, so the
+  provider's prompt cache keeps matching. It is non-destructive: a cleared result can
+  be re-read.
 - **AutoCompact** summarizes the working head behind a `compact_boundary` marker at
   the token threshold, or predictively when the next turn would overflow. The full
   history stays in the array; only messages after the last boundary are sent
   (`llm.MessagesForAPI`). Thresholds are derived from the window minus a summary
-  reservation and a tiered buffer.
+  reservation and a tiered buffer. The kept tail is a token budget cut at turn
+  boundaries (`compaction/tail.go`); the summary request is built on the run's own
+  request prefix so it reads the prompt cache; a summary that does not shrink the view
+  is rejected.
 - **Reactive** handles a `prompt-too-long` (413) error by forcing one AutoCompact and
   retrying the turn exactly once (`loop.run`, guarded by `hasAttemptedReactiveCompact`).
 - A **circuit breaker** (`maxAutoCompactFails = 3`) stops the compactor from
-  retrying a summarizer that keeps failing.
+  retrying a summarizer that keeps failing, and lets one attempt through again after
+  a cool-down or once the conversation has grown.
+- Every pass, and every pass that was due and skipped, is reported to
+  `Config.OnEvent` with a typed reason and tokens before and after.
 
 > Note: `Snip` and `Context-Collapse` are **intentionally absent** — see the package
 > doc comment in `compaction/compaction.go` for why. (Earlier descriptions that list

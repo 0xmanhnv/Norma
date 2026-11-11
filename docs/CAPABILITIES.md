@@ -10,7 +10,8 @@ active without any configuration; "opt-in" means you set the listed `Options` fi
 |---|---|---|---|
 | Streaming tool-use loop | `harness` | `Session.Prompt` / `agentcore.Run` | [agent loop](guides/agent-loop.md) |
 | Wire formats (Anthropic Messages, OpenAI Chat Completions, OpenAI Responses) | `llm` | `llm.NewProvider(Config{Format})` | [architecture](ARCHITECTURE.md#2-package-map) |
-| Retries, rate limiting, proxy | `llm` | `llm.Config` `MaxRetries`, `RetryInterval`, `RateLimit`, `Proxy` | [architecture](ARCHITECTURE.md#2-package-map) |
+| Retries, rate limiting, proxy | `llm` | `llm.Config` `MaxRetries`, `RetryInterval`, `RetryMaxDelay`, `StreamIdleTimeout`, `RateLimit`, `Proxy` | [prompt caching](guides/prompt-caching.md#when-the-provider-is-busy) |
+| Prompt caching | `llm` | on by default (`FormatAnthropic`); `llm.Config.CacheControl` (`FormatOpenAI`); `Options.ModelSettings`, `Options.DynamicBoundary` | [prompt caching](guides/prompt-caching.md) |
 | Non-streaming mode | `harness` | `Options.NonStreaming` | [agent loop](guides/agent-loop.md#streaming-vs-non-streaming) |
 | Host-owned system prompt | `agentcore` | `Options.SystemPrompt` (SDK injects none) | [architecture](ARCHITECTURE.md#1-the-big-picture) |
 | Fail-closed tool system | `tool` | `tool.Build` defaults | [tools](guides/tools.md#fail-closed-defaults) |
