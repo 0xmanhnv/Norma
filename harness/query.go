@@ -21,7 +21,11 @@ type QueryInput struct {
 	Provider        llm.Provider
 	System          []string
 	DynamicBoundary int
-	Messages        []llm.Message // conversation including the latest user turn
+	// ModelSettings are sent with every model request of the run: the prompt
+	// cache lifetime, thinking mode and reasoning effort. They are per session;
+	// changing one between two runs of a conversation invalidates its cache.
+	ModelSettings llm.ModelSettings
+	Messages      []llm.Message // conversation including the latest user turn
 	// SystemReminder, when non-empty, is prepended as the first message on each
 	// model call. It is not stored in conversation history — the host builds it
 	// fresh per Prompt call so it never accumulates across turns.
@@ -933,6 +937,7 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 		MaxTokens:       l.maxTokens(),
 		Temperature:     l.in.Temperature,
 	}
+	l.in.ModelSettings.Apply(&req)
 	if l.in.NonStreaming {
 		return l.completeAndExecute(req)
 	}

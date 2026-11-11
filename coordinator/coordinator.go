@@ -41,6 +41,11 @@ type Config struct {
 	MaxParallel    int // bounded concurrency for RunParallel (default 4)
 	CanUseTool     permission.CanUseTool
 	Hooks          harness.HookRunner
+	// ModelSettings are the workers' cache lifetime, thinking mode and effort
+	// (see subagent.Config.ModelSettings). Workers started by the coordinator
+	// model inherit its session's settings when this is zero; workers started
+	// by RunParallel have no calling run, so set it here.
+	ModelSettings llm.ModelSettings
 
 	// OnResult, when set, is called once per task from RunParallel as that
 	// worker settles — in addition to the result being stored — so a host can
@@ -82,6 +87,8 @@ func (c *Config) subagentConfig() subagent.Config {
 		MaxDepth:    c.MaxDepth,
 		CanUseTool:  c.CanUseTool,
 		Hooks:       c.Hooks,
+
+		ModelSettings: c.ModelSettings,
 		Agents: map[string]subagent.Definition{
 			"worker": {
 				Description:    "Executes a research, implementation, or verification task autonomously and reports back.",
