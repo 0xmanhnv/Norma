@@ -18,6 +18,83 @@ type oaMessage struct {
 	ReasoningContent string       `json:"reasoning_content,omitempty"`
 	ToolCalls        []oaToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string       `json:"tool_call_id,omitempty"`
+	// Parts, when set, is sent as "content" in place of the Content string: an
+	// array of text parts, which is the only shape that can carry a
+	// cache_control marker. Only markOpenAICache sets it (Config.CacheControl).
+	Parts []oaPart `json:"-"`
+}
+
+// oaPart is one text content part, optionally ending a cacheable prefix.
+type oaPart struct {
+	Type         string         `json:"type"`
+	Text         string         `json:"text"`
+	CacheControl map[string]any `json:"cache_control,omitempty"`
+}
+
+// MarshalJSON sends Parts as the content when there are any, the plain string
+// otherwise. The default therefore stays the exact bytes it always was.
+func (m oaMessage) MarshalJSON() ([]byte, error) {
+	type plain oaMessage
+	if len(m.Parts) == 0 {
+		return json.Marshal(plain(m))
+	}
+	return json.Marshal(struct {
+		plain
+		Content []oaPart `json:"content"`
+	}{plain(m), m.Parts})
+}
+
+// markOpenAICache puts cache_control markers on the request's messages at the
+// boundaries the Anthropic adapter uses, for gateways that serve caching
+// models through the Chat Completions format and read the marker from a
+// content part:
+//
+//   - the static system prefix (req.System up to DynamicBoundary). The tool
+//     list renders before the system prompt, so this entry covers it too;
+//   - the conversation tail: the last message this request adds that the next
+//     one sends again (the message before a volatile working frame);
+//   - the previous tail: the message before the latest assistant turn, where
+//     the previous request put its tail, so the read is guaranteed.
+//
+// A message with no text content (an assistant turn that is only tool calls)
+// cannot carry a marker; the mark moves to the nearest earlier message that
+// can. msgs is edited in place.
+func markOpenAICache(msgs []oaMessage, req CompletionRequest) {
+	stableTTL, convTTL := cacheTTLs(req)
+	first := 0
+	if len(msgs) > 0 && msgs[0].Role == "system" {
+		first = 1
+		b := staticBoundary(req)
+		parts := []oaPart{{Type: "text", Text: joinSystem(req.System[:b]), CacheControl: cacheControl(stableTTL)}}
+		if dyn := joinSystem(req.System[b:]); dyn != "" {
+			parts = append(parts, oaPart{Type: "text", Text: dyn})
+		}
+		if parts[0].Text != "" {
+			msgs[0].Parts = parts
+		}
+	}
+	mark := func(i int) int {
+		for ; i >= first; i-- {
+			if msgs[i].Content != "" {
+				if msgs[i].Parts == nil {
+					msgs[i].Parts = []oaPart{{Type: "text", Text: msgs[i].Content, CacheControl: cacheControl(convTTL)}}
+				}
+				return i
+			}
+		}
+		return -1
+	}
+	last := len(msgs) - 1
+	if req.VolatileTail > 0 && last >= first && msgs[last].Role == "user" {
+		last-- // the working frame: never sent again, so nothing ending in it can be read back
+	}
+	mark(last)
+	for a := last; a > first; a-- {
+		if msgs[a].Role == "assistant" {
+			mark(a - 1)
+			break
+		}
+	}
 }
 
 type oaToolCall struct {
@@ -82,6 +159,50 @@ type oaReq struct {
 
 type oaStreamOpts struct {
 	IncludeUsage bool `json:"include_usage"`
+}
+
+// oaUsage is the usage object of a Chat Completions response, with the cache
+// fields the endpoints behind this format report. They disagree on names:
+//
+//	read from the cache                      written to the cache
+//	prompt_tokens_details.cached_tokens      prompt_tokens_details.cache_write_tokens
+//	cache_read_input_tokens                  cache_creation_input_tokens
+//	prompt_cache_hit_tokens                  prompt_tokens_details.cache_creation_tokens
+//
+// The first row is OpenAI's own shape (it reports no writes) as extended by
+// routers; the second is the Anthropic naming that gateways in front of Claude
+// pass through, often next to the first; prompt_cache_hit_tokens is DeepSeek's.
+type oaUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens        int `json:"cached_tokens"`
+		CacheWriteTokens    int `json:"cache_write_tokens"`
+		CacheCreationTokens int `json:"cache_creation_tokens"`
+	} `json:"prompt_tokens_details"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	PromptCacheHitTokens     int `json:"prompt_cache_hit_tokens"`
+}
+
+// norm maps the usage to the canonical Usage, in which InputTokens is the
+// TOTAL input and the cache counts are a subset of it (the same contract as
+// the Anthropic adapter's).
+//
+// A gateway that reports the same tokens under two names is counted once: the
+// largest value per side is taken, never the sum. prompt_tokens is the total
+// in this format and already includes cached tokens, so the cache counts are
+// not added to it — except when they exceed it, which can only mean the
+// endpoint reported prompt_tokens the Anthropic way (uncached input only);
+// then they are added, as the Anthropic adapter does.
+func (u oaUsage) norm() Usage {
+	read := max(u.PromptTokensDetails.CachedTokens, u.CacheReadInputTokens, u.PromptCacheHitTokens)
+	write := max(u.CacheCreationInputTokens, u.PromptTokensDetails.CacheWriteTokens, u.PromptTokensDetails.CacheCreationTokens)
+	in := u.PromptTokens
+	if read+write > in {
+		in += read + write
+	}
+	return Usage{InputTokens: in, OutputTokens: u.CompletionTokens, CacheReadTokens: read, CacheWriteTokens: write}
 }
 
 // toOpenAIMessages flattens the unified model into OpenAI's role-based format:
@@ -246,11 +367,11 @@ func flattenText(blocks []ContentBlock) string {
 }
 
 func (p *openaiProvider) buildBody(req CompletionRequest, stream bool) ([]byte, error) {
-	// A non-empty per-request override (req.Thinking) wins over Config.ThinkingType.
-	thinkingType := p.cfg.ThinkingType
-	if req.Thinking != "" {
-		thinkingType = req.Thinking
-	}
+	// A non-empty per-request override (req.Thinking) wins over
+	// Config.ThinkingType, except that a "disabled" the endpoint never asked
+	// for is left out (thinkingField): many OpenAI-compatible endpoints reject
+	// a body field they do not know.
+	thinkingType := p.cfg.thinkingField(req)
 	// The request is in thinking mode when either a thinking type is set (a
 	// `thinking` body field goes out) or a reasoning effort is configured — the
 	// same providers that then demand reasoning_content be echoed back.
@@ -259,6 +380,9 @@ func (p *openaiProvider) buildBody(req CompletionRequest, stream bool) ([]byte, 
 
 	msgs := toOpenAIMessages(joinSystem(req.System), req.Messages)
 	msgs = sanitizeOpenAIMessages(msgs, thinking)
+	if p.cfg.CacheControl && !req.DisableCache {
+		markOpenAICache(msgs, req)
+	}
 
 	body := oaReq{
 		Model:       p.cfg.Model,
@@ -459,13 +583,7 @@ func parseOpenAIResponse(raw []byte) (Message, string, Usage, error) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage *struct {
-			PromptTokens        int `json:"prompt_tokens"`
-			CompletionTokens    int `json:"completion_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-		} `json:"usage"`
+		Usage *oaUsage `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
 			Type    string `json:"type"`
@@ -479,11 +597,7 @@ func parseOpenAIResponse(raw []byte) (Message, string, Usage, error) {
 	}
 	var usage Usage
 	if r.Usage != nil {
-		usage = Usage{
-			InputTokens:     r.Usage.PromptTokens,
-			OutputTokens:    r.Usage.CompletionTokens,
-			CacheReadTokens: r.Usage.PromptTokensDetails.CachedTokens,
-		}
+		usage = r.Usage.norm()
 	}
 	if len(r.Choices) == 0 {
 		return Message{}, "", usage, fmt.Errorf("openai: empty response (no choices; body: %s)", truncate(string(raw), 500))
@@ -565,19 +679,13 @@ func parseOpenAIFrame(data string, started map[int]bool) (evs []StreamEvent, sto
 			} `json:"delta"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage *struct {
-			PromptTokens        int `json:"prompt_tokens"`
-			CompletionTokens    int `json:"completion_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-		} `json:"usage"`
+		Usage *oaUsage `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(data), &f); err != nil {
 		return nil, "", Usage{}, false
 	}
 	if f.Usage != nil {
-		usage = Usage{InputTokens: f.Usage.PromptTokens, OutputTokens: f.Usage.CompletionTokens, CacheReadTokens: f.Usage.PromptTokensDetails.CachedTokens}
+		usage = f.Usage.norm()
 		hasUsage = true
 	}
 	if len(f.Choices) == 0 {

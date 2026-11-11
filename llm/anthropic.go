@@ -55,17 +55,20 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 		maxTok = 8192
 	}
 	// Effective thinking mode: a non-empty per-request override (req.Thinking)
-	// wins over Config.ThinkingType. Thinking-type content blocks may be replayed
-	// only when thinking is actively "enabled"; any other mode (incl. "disabled")
-	// strips them so Anthropic does not reject the request.
-	thinkingType := p.cfg.ThinkingType
-	thinkingEnabled := thinkingType != ""
+	// wins over Config.ThinkingType. Thinking-type content blocks are replayed
+	// only when thinking is on; with it off (no mode, or "disabled") they are
+	// stripped so Anthropic does not reject the request. What goes on the wire
+	// is decided separately (thinkingField): a "disabled" the endpoint never
+	// asked for is left out rather than sent.
+	thinkingType := p.cfg.thinkingField(req)
+	thinkingEnabled := p.cfg.ThinkingType != ""
 	if req.Thinking != "" {
-		thinkingType = req.Thinking
-		thinkingEnabled = req.Thinking == "enabled"
+		thinkingEnabled = req.Thinking != "disabled"
 	}
+	cache := !req.DisableCache
+	stableTTL, convTTL := cacheTTLs(req)
 	msgs, err := anthropicMessages(mergeAdjacentSameRole(filterThinkingBlocks(req.Messages, thinkingEnabled)),
-		req.DynamicBoundary > 0, req.VolatileTail)
+		cache, req.VolatileTail, convTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -86,8 +89,8 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 	// (another role, an edited prompt) still reads the tools from the cache.
 	// With the system and the two message breakpoints that makes four, the most
 	// Anthropic accepts.
-	if req.DynamicBoundary > 0 && len(body.Tools) > 0 {
-		body.Tools[len(body.Tools)-1].CacheControl = stableCacheControl(req)
+	if cache && len(body.Tools) > 0 {
+		body.Tools[len(body.Tools)-1].CacheControl = cacheControl(stableTTL)
 	}
 	if thinkingType != "" {
 		body.Thinking = &anthropicThinking{Type: thinkingType}
@@ -98,9 +101,9 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 	return json.Marshal(body)
 }
 
-// anthropicMessages encodes the conversation. With caching on (the host set a
-// DynamicBoundary) it also marks two breakpoints, so a long tool loop reads its
-// history from the cache instead of paying full price for it every turn:
+// anthropicMessages encodes the conversation. With caching on (the default) it
+// also marks two breakpoints, so a long tool loop reads its history from the
+// cache instead of paying full price for it every turn:
 //
 //   - the tail: the last block before the volatile tail (working frame), i.e.
 //     everything this request adds that the next one will send again;
@@ -110,8 +113,8 @@ func (p *anthropicProvider) buildBody(req CompletionRequest, stream bool) ([]byt
 //
 // Thinking blocks can't carry a breakpoint; the mark moves to the block before.
 // Together with the tools and system breakpoints this stays within Anthropic's
-// limit of four.
-func anthropicMessages(msgs []Message, cache bool, volatile int) ([]json.RawMessage, error) {
+// limit of four. ttl is the lifetime of both marks ("" for the default).
+func anthropicMessages(msgs []Message, cache bool, volatile int, ttl string) ([]json.RawMessage, error) {
 	type pos struct{ m, b int }
 	var marks []pos
 	if cache {
@@ -176,7 +179,7 @@ func anthropicMessages(msgs []Message, cache bool, volatile int) ([]json.RawMess
 			}
 			for _, p := range marks {
 				if p.m == i {
-					raw.Content[p.b] = withCacheControl(raw.Content[p.b])
+					raw.Content[p.b] = withCacheControl(raw.Content[p.b], ttl)
 				}
 			}
 			if b, err = json.Marshal(raw); err != nil {
@@ -188,9 +191,9 @@ func anthropicMessages(msgs []Message, cache bool, volatile int) ([]json.RawMess
 	return out, nil
 }
 
-// withCacheControl adds "cache_control":{"type":"ephemeral"} to an encoded block,
-// leaving its other bytes as they were.
-func withCacheControl(block json.RawMessage) json.RawMessage {
+// withCacheControl adds "cache_control":{"type":"ephemeral"} to an encoded block
+// (with "ttl" when one is given), leaving its other bytes as they were.
+func withCacheControl(block json.RawMessage, ttl string) json.RawMessage {
 	s := bytes.TrimSpace(block)
 	if len(s) < 2 || s[len(s)-1] != '}' {
 		return block
@@ -199,39 +202,32 @@ func withCacheControl(block json.RawMessage) json.RawMessage {
 	if len(bytes.TrimSpace(s[1:len(s)-1])) > 0 {
 		out = append(out, ',')
 	}
+	if ttl != "" {
+		return append(out, []byte(`"cache_control":{"type":"ephemeral","ttl":"`+ttl+`"}}`)...)
+	}
 	return append(out, []byte(`"cache_control":{"type":"ephemeral"}}`)...)
 }
 
-// stableCacheControl is the marker of the tools and system breakpoints: the
-// request's CacheTTL when it names one Anthropic takes, else the default. They
-// come before the message breakpoints, so a longer lifetime here is allowed.
-func stableCacheControl(req CompletionRequest) map[string]any {
-	cc := map[string]any{"type": "ephemeral"}
-	switch req.CacheTTL {
-	case "1h", "5m":
-		cc["ttl"] = req.CacheTTL
-	}
-	return cc
-}
-
 // buildAnthropicSystem splits the system prompt at DynamicBoundary, placing a
-// cache breakpoint on the static prefix (FR-02.2).
+// cache breakpoint on the static prefix (FR-02.2). With no boundary (0, or one
+// past the end) the whole prompt is the static prefix: a host that names no
+// boundary still gets its system prompt cached. The split is the same with
+// caching off, so turning the cache on or off never changes the prompt bytes.
 func buildAnthropicSystem(req CompletionRequest) []anthropicSystemBlock {
 	if len(req.System) == 0 {
 		return nil
 	}
-	b := req.DynamicBoundary
-	if b <= 0 {
-		// No boundary set → no cache breakpoint.
-		return []anthropicSystemBlock{{Type: "text", Text: joinSystem(req.System)}}
+	var cc map[string]any
+	if !req.DisableCache {
+		stable, _ := cacheTTLs(req)
+		cc = cacheControl(stable)
 	}
+	b := staticBoundary(req)
 	if b >= len(req.System) {
-		// Boundary at/after the end → the whole system prompt is static; cache it
-		// all in one block (an all-static prompt should still be cacheable).
-		return []anthropicSystemBlock{{Type: "text", Text: joinSystem(req.System), CacheControl: stableCacheControl(req)}}
+		return []anthropicSystemBlock{{Type: "text", Text: joinSystem(req.System), CacheControl: cc}}
 	}
 	return []anthropicSystemBlock{
-		{Type: "text", Text: joinSystem(req.System[:b]), CacheControl: stableCacheControl(req)},
+		{Type: "text", Text: joinSystem(req.System[:b]), CacheControl: cc},
 		{Type: "text", Text: joinSystem(req.System[b:])},
 	}
 }

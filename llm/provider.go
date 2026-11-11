@@ -87,15 +87,30 @@ type Config struct {
 	// Ignored when the caller supplies its own HTTPClient.
 	Proxy string
 	// MaxRetries bounds transient-failure retries on the model request
-	// establishment (connection reset / timeout / 429 / 5xx). 0 = default 3;
-	// negative disables retrying. Only the pre-stream phase is retried (safe);
-	// a mid-stream drop is surfaced as an error.
+	// establishment: a connection error or reset before the response starts, a
+	// timeout, or a 408 / 429 / 500 / 502 / 503 / 504 / 529 status. 0 = default
+	// 5; negative disables retrying. Only this phase is retried: once a
+	// response has started, nothing is sent again, so output the consumer has
+	// already seen is never replayed. A mid-stream drop is surfaced as an error.
 	MaxRetries int
 	// RetryInterval, when > 0, replaces the exponential backoff between
 	// establishment retries with this FIXED wait. 0 (default) keeps the
-	// 0.5s/1s/2s… ladder capped at 8s. A host that wants a predictable,
-	// operator-set cadence sets both MaxRetries and this.
+	// 0.5s/1s/2s… ladder, each wait drawn at random from the upper half of its
+	// step so that clients which failed together do not retry together. A host
+	// that wants a predictable, operator-set cadence sets both MaxRetries and
+	// this. A server's Retry-After still wins when it asks for longer.
 	RetryInterval time.Duration
+	// RetryMaxDelay caps any single wait between retries, including one a
+	// server asked for with Retry-After. 0 = default one minute.
+	RetryMaxDelay time.Duration
+	// StreamIdleTimeout, when > 0, fails a response whose body goes silent for
+	// this long: no bytes at all, not even a keep-alive. Without it a stream
+	// that stalls (a dead connection the network never reports) hangs the run
+	// until its context ends. The failure is CodeUnavailable and is not
+	// retried, since part of the response may already have been delivered.
+	// Size it above the longest pause the model makes between events — providers
+	// send keep-alives every few seconds, so a minute or two is safe.
+	StreamIdleTimeout time.Duration
 	// EmptyResponseRetries bounds how many times a completed-but-EMPTY response
 	// is re-requested (FormatOpenAI only; see emptyResponseRetries). 0 = default
 	// 2; negative disables. Separate from MaxRetries because an empty-response
@@ -110,7 +125,9 @@ type Config struct {
 
 	// ThinkingType toggles extended/reasoning mode via the request's
 	// "thinking":{"type":...} field, for both formats. "" omits it (provider
-	// default); "enabled"/"disabled" are sent verbatim.
+	// default); any other value ("enabled", "disabled", "adaptive") is sent
+	// verbatim. Setting it also tells the adapters this endpoint takes the
+	// field: with it empty, a per-request "disabled" is not sent at all.
 	ThinkingType string
 	// ReasoningEffort sets the reasoning strength. "" omits it. For OpenAI it maps
 	// to "reasoning_effort"; for Anthropic to "output_config":{"effort":...}.
@@ -126,14 +143,33 @@ type Config struct {
 	// Ignored by the Anthropic and Responses formats, which name the field
 	// themselves ("max_tokens" / "max_output_tokens").
 	MaxTokensField string
+	// CacheControl makes FormatOpenAI send prompt-cache markers: the system
+	// prompt and the marked messages go out with "content" as an array of text
+	// parts, the last of which carries "cache_control":{"type":"ephemeral"}
+	// (plus "ttl" when the request names one), at the same boundaries the
+	// Anthropic format uses. Turn it on for a gateway that serves a caching
+	// model (Claude, and others that take explicit breakpoints) through Chat
+	// Completions and reads the marker from content parts.
+	//
+	// Off by default: OpenAI's own endpoint caches automatically and takes no
+	// marker, and a strict OpenAI-compatible endpoint rejects the unknown
+	// field. Cache usage is read from the response either way. Ignored by the
+	// other formats (FormatAnthropic always marks, unless a request sets
+	// DisableCache).
+	CacheControl bool
 
 	limiter *rateLimiter // built from RateLimit by NewProvider; shared via the provider
 }
 
-// retries returns the effective retry count (0 → default 3; negative → 0).
+// defaultMaxRetries is the establishment retry count of an unset Config. With
+// the default ladder it rides out about a quarter of a minute of 429s or
+// overload before giving up; the previous three gave up after 3.5 s.
+const defaultMaxRetries = 5
+
+// retries returns the effective retry count (0 → default; negative → 0).
 func (c Config) retries() int {
 	if c.MaxRetries == 0 {
-		return 3
+		return defaultMaxRetries
 	}
 	if c.MaxRetries < 0 {
 		return 0
@@ -141,13 +177,22 @@ func (c Config) retries() int {
 	return c.MaxRetries
 }
 
-// retryDelay is the wait before establishment retry number attempt (0-based):
-// the configured fixed interval when set, the exponential ladder otherwise.
+// retryDelay is the longest wait before establishment retry number attempt
+// (0-based) when the server names none: the configured fixed interval when
+// set, the exponential ladder otherwise, capped at maxRetryDelay.
 func (c Config) retryDelay(attempt int) time.Duration {
 	if c.RetryInterval > 0 {
-		return c.RetryInterval
+		return min(c.RetryInterval, c.maxRetryDelay())
 	}
-	return expBackoff(attempt)
+	return min(expBackoff(attempt), c.maxRetryDelay())
+}
+
+// maxRetryDelay is the cap on a single wait (0 → one minute).
+func (c Config) maxRetryDelay() time.Duration {
+	if c.RetryMaxDelay > 0 {
+		return c.RetryMaxDelay
+	}
+	return time.Minute
 }
 
 // emptyRetries returns the effective empty-response retry count
@@ -167,7 +212,7 @@ func (c Config) emptyRetryDelay(attempt int) time.Duration {
 	if c.EmptyResponseInterval > 0 {
 		return c.EmptyResponseInterval
 	}
-	return expBackoff(attempt)
+	return min(expBackoff(attempt), c.maxRetryDelay())
 }
 
 // Provider produces a completion, either streamed (Stream) or in a single

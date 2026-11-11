@@ -186,8 +186,8 @@ func TestProviderSummarizerReplaysRealMessages(t *testing.T) {
 		t.Fatalf("calls=%d, want 1", len(p.reqs))
 	}
 	req := p.reqs[0]
-	if req.Thinking != "disabled" {
-		t.Fatalf("thinking=%q, want disabled", req.Thinking)
+	if req.Thinking != "" {
+		t.Fatalf("thinking=%q: the summary must not name a thinking mode", req.Thinking)
 	}
 	if req.MaxTokens != 8000 { // min(20000, 8000)
 		t.Fatalf("maxTokens=%d, want 8000", req.MaxTokens)

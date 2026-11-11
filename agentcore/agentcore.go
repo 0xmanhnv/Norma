@@ -35,6 +35,10 @@ type Options struct {
 	SystemPrompt       []string
 	AppendSystemPrompt []string
 	DynamicBoundary    int
+	// ModelSettings are the session's prompt-cache lifetime, thinking mode and
+	// reasoning effort (see llm.ModelSettings). Set them once: changing one
+	// mid-session invalidates the cached conversation.
+	ModelSettings llm.ModelSettings
 
 	// Tools the agent may call. Defaults to tool.DefaultTools().
 	Tools []tool.CoreTool
@@ -582,6 +586,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		Provider:           s.opts.Provider,
 		System:             s.system(),
 		DynamicBoundary:    s.opts.DynamicBoundary,
+		ModelSettings:      s.opts.ModelSettings,
 		Messages:           s.messages,
 		SystemReminder:     buildSystemReminder(reminderExtra),
 		WorkingFrame:       s.opts.WorkingFrame,

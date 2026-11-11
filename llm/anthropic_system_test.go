@@ -11,8 +11,8 @@ func TestBuildAnthropicSystemCacheBoundary(t *testing.T) {
 		wantBlocks int
 		wantCached []bool // per-block: has cache_control
 	}{
-		{"no boundary (0) → single uncached", 0, 1, []bool{false}},
-		{"negative → single uncached", -1, 1, []bool{false}},
+		{"no boundary (0) → whole thing cached", 0, 1, []bool{true}},
+		{"negative → whole thing cached", -1, 1, []bool{true}},
 		{"mid split → cached prefix + dynamic tail", 2, 2, []bool{true, false}},
 		{"boundary == len → whole thing cached", 3, 1, []bool{true}},
 		{"boundary > len → whole thing cached", 5, 1, []bool{true}},
@@ -30,5 +30,13 @@ func TestBuildAnthropicSystemCacheBoundary(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// DisableCache keeps the same split and drops only the marker.
+func TestBuildAnthropicSystemCacheDisabled(t *testing.T) {
+	blocks := buildAnthropicSystem(CompletionRequest{System: []string{"a", "b", "c"}, DynamicBoundary: 2, DisableCache: true})
+	if len(blocks) != 2 || blocks[0].CacheControl != nil || blocks[1].CacheControl != nil {
+		t.Fatalf("want two unmarked blocks, got %+v", blocks)
 	}
 }

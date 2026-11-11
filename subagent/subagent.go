@@ -38,6 +38,11 @@ type Config struct {
 	// file under the parent session (whose id is read from the context). Subagent
 	// tokens are recorded there, separate from the parent's totals.
 	Transcript *transcript.Store
+	// ModelSettings are the cache lifetime, thinking mode and effort of every
+	// subagent request. Left zero, a subagent started from a tool call uses
+	// the calling run's (harness.ParentRun), so it caches the way its parent
+	// does. Prompt caching itself is on by default either way.
+	ModelSettings llm.ModelSettings
 }
 
 type ctxKey int
@@ -160,8 +165,12 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		PermissionMode: def.PermissionMode,
 		CanUseTool:     cfg.CanUseTool,
 		Hooks:          cfg.Hooks,
+		ModelSettings:  cfg.ModelSettings,
 	}
 	if p, ok := harness.ParentRunFrom(ctx); ok {
+		if in.ModelSettings == (llm.ModelSettings{}) {
+			in.ModelSettings = p.ModelSettings
+		}
 		mode := p.PermissionMode
 		if def.PermissionMode != "" {
 			mode = harness.StricterMode(p.PermissionMode, def.PermissionMode)

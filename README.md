@@ -126,7 +126,7 @@ Implements the core loop, the provider adapters, tools, the full permission pipe
 - **[Architecture](docs/ARCHITECTURE.md)** — the whole system with Mermaid diagrams and a package map.
 - **[Capability matrix](docs/CAPABILITIES.md)** — what Corvid can do, which package owns it, and how to turn it on.
 - **[Documentation index](docs/README.md)** — reading paths for using Corvid vs contributing to it.
-- **Subsystem guides** — one page each: [agent loop](docs/guides/agent-loop.md) · [tools](docs/guides/tools.md) · [permissions](docs/guides/permissions.md) · [compaction](docs/guides/compaction.md) · [subagents](docs/guides/subagents.md) · [MCP](docs/guides/mcp.md) · [skills](docs/guides/skills.md) · [memory](docs/guides/memory.md) · [jobs](docs/guides/jobs.md).
+- **Subsystem guides** — one page each: [agent loop](docs/guides/agent-loop.md) · [tools](docs/guides/tools.md) · [permissions](docs/guides/permissions.md) · [compaction](docs/guides/compaction.md) · [prompt caching](docs/guides/prompt-caching.md) · [subagents](docs/guides/subagents.md) · [MCP](docs/guides/mcp.md) · [skills](docs/guides/skills.md) · [memory](docs/guides/memory.md) · [jobs](docs/guides/jobs.md).
 - **[Contributing](CONTRIBUTING.md)** — build, test, layout, and conventions.
 - **Package reference** — [pkg.go.dev/github.com/0xmanhnv/corvid](https://pkg.go.dev/github.com/0xmanhnv/corvid); every package opens with a precise doc comment.
 

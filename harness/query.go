@@ -21,7 +21,11 @@ type QueryInput struct {
 	Provider        llm.Provider
 	System          []string
 	DynamicBoundary int
-	Messages        []llm.Message // conversation including the latest user turn
+	// ModelSettings are sent with every model request of the run: the prompt
+	// cache lifetime, thinking mode and reasoning effort. They are per session;
+	// changing one between two runs of a conversation invalidates its cache.
+	ModelSettings llm.ModelSettings
+	Messages      []llm.Message // conversation including the latest user turn
 	// SystemReminder, when non-empty, is prepended as the first message on each
 	// model call. It is not stored in conversation history — the host builds it
 	// fresh per Prompt call so it never accumulates across turns.
@@ -391,6 +395,13 @@ func (l *loop) recordNewBoundary() {
 		return
 	}
 	if i := llm.LastBoundaryIndex(l.messages); i >= 0 {
+		if cr, ok := l.in.Recorder.(CompactionRecorder); ok {
+			if meta, ok := llm.ParseBoundaryMeta(l.messages[i]); ok {
+				cr.RecordCompaction(meta, l.messages[i:])
+				l.boundaryCount = c
+				return
+			}
+		}
 		if meta, ok := llm.ParseBoundaryMeta(l.messages[i]); ok {
 			l.in.Recorder.RecordBoundary(meta)
 		}
@@ -454,6 +465,7 @@ func (l *loop) run() {
 			schemas = filterToolSchemas(schemas, l.in.DeferredTools)
 		}
 	}
+	l.announcePrefix(schemas)
 	l.turnCount = 1 // the first model call is turn 1
 	l.boundaryCount = countBoundaries(l.messages)
 	l.startTime = time.Now() // wall-clock baseline for MaxDuration
@@ -485,6 +497,7 @@ func (l *loop) run() {
 		// Non-destructive proactive compaction (MicroCompact → AutoCompact).
 		if l.in.Compactor != nil {
 			l.messages = l.in.Compactor.Pre(l.ctx, l.messages, l.lastInputTokens)
+			l.absorbCompactionUsage()
 			l.recordNewBoundary()
 		}
 
@@ -511,11 +524,13 @@ func (l *loop) run() {
 			if l.in.Compactor != nil && l.in.Compactor.IsOverflow(streamErr) && !l.hasAttemptedReactiveCompact {
 				l.hasAttemptedReactiveCompact = true
 				if msgs, ok := l.in.Compactor.Reactive(l.ctx, l.messages); ok {
+					l.absorbCompactionUsage()
 					l.messages = msgs
 					l.recordNewBoundary()
 					l.lastContinue = ContinueReactiveCompactRetry
 					continue
 				}
+				l.absorbCompactionUsage()
 				l.finish(ReasonPromptTooLong, streamErr, "")
 				return
 			}
@@ -933,6 +948,7 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 		MaxTokens:       l.maxTokens(),
 		Temperature:     l.in.Temperature,
 	}
+	l.in.ModelSettings.Apply(&req)
 	if l.in.NonStreaming {
 		return l.completeAndExecute(req)
 	}

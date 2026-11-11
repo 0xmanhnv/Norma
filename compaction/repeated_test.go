@@ -22,7 +22,7 @@ func TestPreRepeatedCompactionOverGrowingConversation(t *testing.T) {
 	const cycles = 6
 	for iter := range cycles {
 		for j := range 5 { // conversation grows by 5 turns
-			msgs = append(msgs, llm.UserText(fmt.Sprintf("turn-%d-%d", iter, j)))
+			msgs = append(msgs, llm.UserText(fmt.Sprintf("turn-%d-%d %s", iter, j, strings.Repeat("x", 400))))
 		}
 		// The model reports we are above the auto threshold (179000).
 		msgs = c.Pre(context.Background(), msgs, 200000)

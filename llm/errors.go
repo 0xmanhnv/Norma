@@ -133,16 +133,47 @@ type ToolError struct {
 	Code Code   `json:"code"`
 }
 
-// overflowMarkers are phrasings providers use when a prompt does not fit the
+// overflowMarkers are the shapes providers use when a prompt does not fit the
 // context window. Matched case-insensitively. This list is the single owner of
 // text-based overflow recognition: the adapters classify provider errors with
 // it, and compaction.IsOverflow falls back to it for errors no adapter
 // classified.
+//
+// Each entry is specific to a context-length rejection. A looser match is
+// expensive rather than safe: an error taken for an overflow triggers a
+// compaction, which summarizes the history, costs a model call and cannot fix
+// what was actually wrong. A bare "too long" used to be on this list and
+// matched an over-long tool name, a field over its length limit and a request
+// that "took too long".
 var overflowMarkers = []string{
-	"too long",
+	// Anthropic: "prompt is too long: 215000 tokens > 200000 maximum",
+	// "input length and `max_tokens` exceed context limit: …", and the
+	// request_too_large error type of an oversized body.
+	"prompt is too long",
+	"prompt too long",
+	"context limit",
+	"request_too_large",
+	// OpenAI and the many compatible servers: code context_length_exceeded,
+	// "This model's maximum context length is N tokens", "Your input exceeds
+	// the context window of this model", "Please reduce the length of the
+	// messages".
 	"context length",
 	"context_length",
 	"maximum context",
+	"context window",
+	"context_window",
+	"reduce the length of the messages",
+	// Gemini: "The input token count (N) exceeds the maximum number of tokens
+	// allowed (M)".
+	"input token count",
+	// Bedrock: "Input is too long for requested model".
+	"input is too long",
+	// xAI: "This model's maximum prompt length is N but the request contains M
+	// tokens".
+	"maximum prompt length",
+	// llama.cpp and friends: "the request exceeds the available context size".
+	"context size",
+	// An oversized request by status, as our own errors render it.
 	"status 413",
 }
 

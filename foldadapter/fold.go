@@ -42,11 +42,49 @@ func Enable(opts *agentcore.Options, o Options) error {
 
 	opts.Compactor = &Compactor{sess: sess}
 	opts.Tools = append(opts.Tools, newCompressTool(sess))
-	opts.AppendSystemPrompt = append(opts.AppendSystemPrompt, fold.BuildSystemPrompt(fold.Sections{}))
-	// The prompt section is fully static, so it belongs in the cacheable prefix.
-	// Left past the boundary it would be re-billed every single request.
-	opts.DynamicBoundary = len(opts.SystemPrompt) + len(opts.AppendSystemPrompt)
+	addStaticSection(opts, fold.BuildSystemPrompt(fold.Sections{}))
 	return nil
+}
+
+// addStaticSection adds fold's prompt section to the system prompt, inside the
+// cacheable prefix. The section is fully static: left past the boundary it
+// would be re-billed on every request.
+//
+// The host's own boundary is respected. Enable used to overwrite it with "the
+// whole prompt is static", which moved every segment the host had declared
+// dynamic into the cached prefix: the first time one of them changed, the
+// static part in front of it stopped being readable from the cache too.
+//
+//   - Host boundary inside the prompt: the section goes in at the boundary,
+//     which moves one segment right. What was static stays static, what was
+//     dynamic stays dynamic, and their order is kept.
+//   - No boundary, or one at the end: the section is appended and the
+//     boundary set after it, so everything the host passed is static (the
+//     default) while segments the session adds later, such as the memory
+//     index, stay outside the prefix.
+func addStaticSection(opts *agentcore.Options, section string) {
+	nSys, total := len(opts.SystemPrompt), len(opts.SystemPrompt)+len(opts.AppendSystemPrompt)
+	b := opts.DynamicBoundary
+	if b <= 0 || b >= total {
+		opts.AppendSystemPrompt = append(opts.AppendSystemPrompt, section)
+		opts.DynamicBoundary = total + 1
+		return
+	}
+	if b < nSys {
+		// The boundary falls inside SystemPrompt. Copy before inserting: the
+		// host's slice must not be edited behind its back.
+		sys := make([]string, 0, nSys+1)
+		sys = append(sys, opts.SystemPrompt[:b]...)
+		sys = append(sys, section)
+		opts.SystemPrompt = append(sys, opts.SystemPrompt[b:]...)
+	} else {
+		at := b - nSys
+		app := make([]string, 0, len(opts.AppendSystemPrompt)+1)
+		app = append(app, opts.AppendSystemPrompt[:at]...)
+		app = append(app, section)
+		opts.AppendSystemPrompt = append(app, opts.AppendSystemPrompt[at:]...)
+	}
+	opts.DynamicBoundary = b + 1
 }
 
 // defaultContextLimit is used when the host names no window. It is deliberately

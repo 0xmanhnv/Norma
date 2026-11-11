@@ -159,6 +159,12 @@ func (m Message) Text() string {
 }
 
 // Usage reports token accounting, including prompt-cache tokens (FR-03.8).
+//
+// InputTokens is the total input of the request, cached or not. CacheReadTokens
+// (served from the cache) and CacheWriteTokens (written to it) are parts of
+// that total, not additions to it: the full-price input is
+// InputTokens - CacheReadTokens - CacheWriteTokens. Every adapter normalizes to
+// this, so do not add the cache counts to InputTokens when pricing a request.
 type Usage struct {
 	InputTokens      int `json:"input_tokens"`
 	OutputTokens     int `json:"output_tokens"`
@@ -206,9 +212,14 @@ type CompletionRequest struct {
 	// no presets (design decision 1). Segments are joined with blank lines.
 	System []string
 	// DynamicBoundary is the index in System separating cacheable static prefix
-	// from per-request dynamic content; providers may set a cache breakpoint
-	// there (FR-02.2). 0 disables.
+	// from per-request dynamic content; providers set a cache breakpoint there
+	// (FR-02.2). 0 (or a value past the end) treats the whole system prompt as
+	// static. Caching itself is on unless DisableCache is set.
 	DynamicBoundary int
+	// DisableCache sends the request without any prompt-cache marker. Use it
+	// for a one-off call whose prefix no later request repeats (a summary made
+	// by a separate model): a marker there buys a cache write nobody reads.
+	DisableCache bool
 	// VolatileTail is how many content blocks at the very end of Messages change
 	// on every request (a working frame, a per-request reminder). Providers that
 	// cache the conversation place the cache breakpoint before them, since a
@@ -224,18 +235,24 @@ type CompletionRequest struct {
 	// prefix. "" keeps the provider's default (five minutes on Anthropic);
 	// "1h" asks for one hour, worth it when requests sharing that prefix
 	// start more than five minutes apart (a cache write costs more at one
-	// hour). The conversation breakpoints keep the default, since a longer
-	// lifetime may come before a shorter one but not after it.
-	CacheTTL    string
+	// hour). The conversation breakpoints follow ConversationCacheTTL.
+	CacheTTL string
+	// ConversationCacheTTL is the lifetime of the conversation breakpoints. ""
+	// keeps the provider's default (five minutes); "1h" keeps the history
+	// cached across gaps of up to an hour between requests (a slow tool, a
+	// person answering). A longer lifetime may come before a shorter one but
+	// not after it, so "1h" here puts the stable prefix on one hour as well.
+	ConversationCacheTTL string
+
 	Messages    []Message
 	Tools       []ToolSchema
 	MaxTokens   int
 	Temperature *float64
 	Stop        []string
 	// Thinking overrides the provider's thinking mode for THIS request only:
-	// "" inherits Config.ThinkingType; "enabled"/"disabled" force that mode.
-	// Compaction's summary call sets "disabled" so the summarizer never spends
-	// tokens on reasoning and never replays thinking blocks (which Anthropic
-	// rejects when thinking is off).
+	// "" inherits Config.ThinkingType; any other value is that mode. An adapter
+	// only puts a thinking field on the wire when the endpoint is known to take
+	// one: "disabled" against a provider configured with no ThinkingType sends
+	// nothing, which is how such an endpoint is asked not to think.
 	Thinking string
 }

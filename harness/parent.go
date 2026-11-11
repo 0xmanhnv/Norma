@@ -27,6 +27,9 @@ type ParentRun struct {
 	OnToolResult       func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result)
 	RewriteToolResult  func(ctx context.Context, toolUseID, name string, input json.RawMessage, res tool.Result) tool.Rewrite
 	Settlement         *Settlement
+	// ModelSettings are the calling run's cache lifetime, thinking mode and
+	// effort, so a child is sent the same way unless it is configured itself.
+	ModelSettings llm.ModelSettings
 }
 
 type parentKey struct{}
@@ -71,6 +74,7 @@ func (l *loop) parentRun(mode permission.Mode) ParentRun {
 		OnToolResult:       l.in.OnToolResult,
 		RewriteToolResult:  l.in.RewriteToolResult,
 		Settlement:         l.in.Settlement,
+		ModelSettings:      l.in.ModelSettings,
 	}
 }
 

@@ -2,6 +2,7 @@ package compaction
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 
@@ -16,27 +17,112 @@ const (
 	ptlRetryMarker         = "[earlier conversation truncated for compaction retry]" // PTL_RETRY_MARKER
 )
 
-// summarySystemPrompt is the summarizer's system prompt (== claude-code
-// streamCompactSummary fallback path). Thinking is disabled and no tools are
-// offered; the no-tools guardrails live in the user prompt (§7).
+// summarySystemPrompt is the system prompt of a standalone summary (== claude-code
+// streamCompactSummary fallback path). No tools are offered; the no-tools
+// guardrails live in the user prompt (§7). The request names no thinking mode:
+// it runs with whatever the provider is configured for, because a "disabled"
+// field is rejected by endpoints that do not know it and by models that cannot
+// turn thinking off.
 const summarySystemPrompt = "You are a helpful AI assistant tasked with summarizing conversations."
 
-// ProviderSummarizer builds a Summarizer backed by an llm.Provider. It replays
-// the real conversation messages (not a rendered text transcript) followed by the
-// summary-request user message, with thinking disabled and output capped at
-// min(20000, maxOutputTokens). It retries transient stream failures
-// (MAX_COMPACT_STREAMING_RETRIES) and, if the summary request itself overflows,
-// drops the oldest API-round groups and retries (MAX_PTL_RETRIES).
+// SummaryCall is what the compactor knows about the summary it is asking for
+// beyond the messages to condense. It travels on the context of a Summarizer
+// call (SummaryCallFrom), so a summarizer can make the summary over the run's
+// own request prefix and report what the call cost.
+type SummaryCall struct {
+	// Prefix is what every model request of the run starts with: its system
+	// prompt and boundary, tool list, cache and thinking settings, and in
+	// Messages whatever the loop sends in front of the conversation. A summary
+	// request built on it reads the run's prompt cache, because a cache is
+	// keyed on exactly these bytes. HasPrefix is false when the loop never
+	// announced one (Compactor.SetRequestPrefix), and Prefix is then empty.
+	Prefix    llm.CompletionRequest
+	HasPrefix bool
+	// Conversation is the conversation as the run's next request would carry
+	// it. Summarizing over it, rather than over the older part alone, is what
+	// lets the request read the entry the previous turn wrote. After a context
+	// overflow it holds only the part being summarized, since the whole would
+	// overflow again.
+	Conversation []llm.Message
+
+	usage llm.Usage
+}
+
+// AddUsage records what a model call made for this summary cost. The compactor
+// passes the total on (Compactor.TakeUsage), so summaries show up in the run's
+// accounting instead of being spent silently.
+func (s *SummaryCall) AddUsage(u llm.Usage) {
+	if s != nil {
+		s.usage.Add(u)
+	}
+}
+
+type summaryCallKey struct{}
+
+// SummaryCallFrom returns the SummaryCall of the summary being made, or nil
+// when ctx is not a Summarizer call made by a Compactor.
+func SummaryCallFrom(ctx context.Context) *SummaryCall {
+	c, _ := ctx.Value(summaryCallKey{}).(*SummaryCall)
+	return c
+}
+
+// errNoSummaryText is a summary response with no text in it: the model called
+// a tool instead of answering, or returned nothing. Using it would replace the
+// summarized history with an empty message.
+var errNoSummaryText = errors.New("compaction: the summary response contained no text")
+
+// ProviderSummarizer builds the Summarizer of a session: p is the provider the
+// run itself uses.
+//
+// When the compactor knows the run's request prefix (SummaryCall.HasPrefix) the
+// summary is made over it: the same tools and system prompt, the conversation
+// so far, and the summary instruction appended as the last message. That
+// request shares its whole prefix with the run's previous one, so the history
+// is read from the prompt cache instead of being billed as fresh input, on the
+// first attempt and on every retry. The tools are listed only to keep the
+// prefix identical; the instruction tells the model not to call them, and a
+// response that calls one anyway is retried.
+//
+// Without a prefix (a compactor driven without the loop) it falls back to a
+// standalone request, see StandaloneSummarizer.
+//
+// Output is capped at min(20000, maxOutputTokens). Transient stream failures
+// are retried (MAX_COMPACT_STREAMING_RETRIES); if the summary request itself
+// overflows, the oldest API-round groups are dropped and it is retried
+// (MAX_PTL_RETRIES).
 func ProviderSummarizer(p llm.Provider, maxOutputTokens int, nonStreaming bool) Summarizer {
+	return providerSummarizer(p, maxOutputTokens, nonStreaming, true)
+}
+
+// StandaloneSummarizer builds a Summarizer that never shares the run's prefix:
+// its request carries its own short system prompt, no tools, the messages to
+// condense and the summary instruction, and no prompt-cache markers (nothing
+// would read what they wrote). Use it to summarize with a different, cheaper
+// model than the run's — a cache is per model, so such a call could not read
+// the run's entries anyway. Set it as Config.Summarizer.
+func StandaloneSummarizer(p llm.Provider, maxOutputTokens int, nonStreaming bool) Summarizer {
+	return providerSummarizer(p, maxOutputTokens, nonStreaming, false)
+}
+
+func providerSummarizer(p llm.Provider, maxOutputTokens int, nonStreaming, sharePrefix bool) Summarizer {
 	maxOut := compactMaxOutputTokens
 	if maxOutputTokens > 0 && maxOutputTokens < maxOut {
 		maxOut = maxOutputTokens
 	}
 	return func(ctx context.Context, msgs []llm.Message) (string, error) {
+		call := SummaryCallFrom(ctx)
+		base := llm.CompletionRequest{System: []string{summarySystemPrompt}, DisableCache: true}
 		work := pairForReplay(msgs)
+		if sharePrefix && call != nil && call.HasPrefix {
+			base = call.Prefix
+			work = call.Conversation
+		}
+		base.MaxTokens = maxOut
+		base.VolatileTail = 0
+		lead := base.Messages
 		var lastErr error
 		for attempt := 0; attempt <= maxPTLRetries; attempt++ {
-			raw, err := streamSummary(ctx, p, maxOut, work, nonStreaming)
+			raw, err := streamSummary(ctx, p, base, lead, work, nonStreaming, call)
 			if err == nil {
 				return formatCompactSummary(raw), nil
 			}
@@ -54,19 +140,17 @@ func ProviderSummarizer(p llm.Provider, maxOutputTokens int, nonStreaming bool) 
 	}
 }
 
-// streamSummary issues one summary request (head + summary-request message),
-// retrying transient (non-overflow) stream failures. Overflow is returned
-// immediately so the caller can truncate and retry at a coarser granularity.
-func streamSummary(ctx context.Context, p llm.Provider, maxOut int, head []llm.Message, nonStreaming bool) (string, error) {
-	reqMsgs := make([]llm.Message, 0, len(head)+1)
-	reqMsgs = append(reqMsgs, head...)
-	reqMsgs = append(reqMsgs, llm.UserText(compactPrompt))
-	req := llm.CompletionRequest{
-		System:    []string{summarySystemPrompt},
-		Messages:  reqMsgs,
-		MaxTokens: maxOut,
-		Thinking:  "disabled",
-	}
+// streamSummary issues one summary request — base with lead, the conversation
+// and the summary-request message as its messages — retrying transient
+// (non-overflow) failures. Overflow is returned immediately so the caller can
+// truncate and retry at a coarser granularity. Usage of every attempt that
+// reported any goes to call.
+func streamSummary(ctx context.Context, p llm.Provider, base llm.CompletionRequest, lead, conv []llm.Message, nonStreaming bool, call *SummaryCall) (string, error) {
+	req := base
+	req.Messages = make([]llm.Message, 0, len(lead)+len(conv)+1)
+	req.Messages = append(req.Messages, lead...)
+	req.Messages = append(req.Messages, conv...)
+	req.Messages = append(req.Messages, llm.UserText(compactPrompt))
 	var lastErr error
 	for range maxStreamingRetries {
 		if ctx.Err() != nil {
@@ -75,8 +159,9 @@ func streamSummary(ctx context.Context, p llm.Provider, maxOut int, head []llm.M
 		var text string
 		var callErr error
 		if nonStreaming {
-			msg, _, _, err := p.Complete(ctx, req)
+			msg, _, usage, err := p.Complete(ctx, req)
 			text, callErr = msg.Text(), err
+			call.AddUsage(usage)
 		} else {
 			acc := llm.NewAccumulator()
 			for ev, err := range p.Stream(ctx, req) {
@@ -86,9 +171,13 @@ func streamSummary(ctx context.Context, p llm.Provider, maxOut int, head []llm.M
 				}
 				acc.Add(ev)
 			}
+			call.AddUsage(acc.Usage)
 			if callErr == nil {
 				text = acc.Message().Text()
 			}
+		}
+		if callErr == nil && strings.TrimSpace(text) == "" {
+			callErr = errNoSummaryText
 		}
 		if callErr == nil {
 			return text, nil
