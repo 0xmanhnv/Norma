@@ -23,6 +23,9 @@ type streamExec struct {
 	// it enters wrap-up; tool goroutines read this snapshot instead, so the swap never
 	// races with a tool that is still starting.
 	toolCtx context.Context
+	// truncated is set when this turn held a tool call the output limit cut
+	// short (see addRefused). The turn loop reads it to raise the output cap.
+	truncated bool
 }
 
 type toolStatus int
@@ -64,6 +67,15 @@ func (e *streamExec) add(block llm.ContentBlock) {
 	e.tools = append(e.tools, &tracked{block: block, safe: safe})
 	e.mu.Unlock()
 	e.processQueue()
+}
+
+// addRefused registers a tool_use block the harness will not run, already
+// answered with result. It takes its place in the FIFO like any other call, so
+// results still come out in arrival order.
+func (e *streamExec) addRefused(block, result llm.ContentBlock) {
+	e.mu.Lock()
+	e.tools = append(e.tools, &tracked{block: block, safe: true, status: stCompleted, result: result})
+	e.mu.Unlock()
 }
 
 // canStartLocked reports whether a tool with the given safety may start now.

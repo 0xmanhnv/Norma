@@ -262,8 +262,8 @@ func Query(ctx context.Context, in QueryInput, deps QueryDeps) iter.Seq2[Event, 
 		if in.OnExit != nil {
 			t := l.terminal
 			if t == nil {
-				t = &Terminal{Reason: ReasonConsumerStopped, Usage: l.usage, SubagentUsage: l.subagentUsage(),
-					Turns: l.turnCount, Messages: l.messages}
+				t = &Terminal{Reason: ReasonConsumerStopped, StopReason: l.lastStopReason, Usage: l.usage,
+					SubagentUsage: l.subagentUsage(), Turns: l.turnCount, Messages: l.messages}
 			}
 			in.OnExit(t)
 		}
@@ -299,7 +299,8 @@ type loop struct {
 
 	messages        []llm.Message
 	usage           llm.Usage
-	lastInputTokens int // total token size the previous model response reported (compaction gate)
+	lastInputTokens int    // total token size the previous model response reported (compaction gate)
+	lastStopReason  string // stop reason of the last model turn that finished (Terminal.StopReason)
 	turnCount       int
 	boundaryCount   int       // boundary markers already seen, so Recorder fires once each
 	startTime       time.Time // loop start, for MaxDuration (wall-clock budget)
@@ -317,6 +318,17 @@ type loop struct {
 	budget                       budgetTracker
 	lastContinue                 ContinueReason
 }
+
+// Stop reasons the loop acts on, as the adapters normalize them.
+const (
+	stopMaxTokens = "max_tokens"
+	stopRefusal   = "refusal"
+)
+
+// truncatedCallText answers a tool call whose arguments the output limit cut
+// short. The model reads it, so it says what happened and what to do next.
+const truncatedCallText = "Error: truncated: the call was cut off at the output limit before its arguments were complete, so it was not run. " +
+	"Retry with a smaller call: send less in one call, or split the work across several calls."
 
 const (
 	budgetCompletionThresholdNum = 9 // 0.9
@@ -412,6 +424,7 @@ func (l *loop) finish(reason TerminalReason, err error, text string) {
 	l.terminal = &Terminal{
 		Reason:        reason,
 		Err:           err,
+		StopReason:    l.lastStopReason,
 		Usage:         l.usage,
 		SubagentUsage: l.subagentUsage(),
 		Turns:         l.turnCount,
@@ -481,6 +494,15 @@ func (l *loop) run() {
 			return
 		}
 		if streamErr != nil {
+			// Tools that had fully arrived before the stream broke have run. Keep
+			// that in the conversation and the transcript — the assistant turn as
+			// far as those calls, and their results — so a retry or a resume sees
+			// the side effects instead of repeating them blind.
+			if exec != nil && exec.count() > 0 {
+				l.messages = append(l.messages, asst)
+				l.record(asst, usageDelta(usageBefore, l.usage))
+				l.appendToolResults(exec)
+			}
 			if l.ctx.Err() != nil {
 				l.finish(ReasonAbortedStreaming, l.ctx.Err(), "")
 				return
@@ -501,12 +523,20 @@ func (l *loop) run() {
 			return
 		}
 		l.hasAttemptedReactiveCompact = false
-		l.messages = append(l.messages, asst)
+		l.lastStopReason = stopReason
+		toolUses := asst.ToolUses()
+		// A refusal ends the run as its own terminal state. The provider may send
+		// no content at all with it; an assistant message with no content is not
+		// appended (it says nothing, and providers reject it on replay).
+		refused := stopReason == stopRefusal && len(toolUses) == 0
 		turnUsage := usageDelta(usageBefore, l.usage)
 		// The size the model just reported for its input, preferred by the
 		// compactor over local estimation on the next turn's gate check.
 		l.lastInputTokens = turnUsage.InputTokens + turnUsage.OutputTokens
-		l.record(asst, turnUsage)
+		if !refused || len(asst.Content) > 0 {
+			l.messages = append(l.messages, asst)
+			l.record(asst, turnUsage)
+		}
 		// surface cumulative usage after each model turn so hosts can show live token
 		// counts during a run (not just at the terminal event).
 		if u := l.usage; u != (llm.Usage{}) {
@@ -514,7 +544,10 @@ func (l *loop) run() {
 				return
 			}
 		}
-		toolUses := asst.ToolUses()
+		if refused {
+			l.finish(ReasonRefusal, llm.NewError(llm.CodeRefusal, "the model refused to continue (stop reason: refusal)"), asst.Text())
+			return
+		}
 
 		// max_tokens truncation with no tool calls → escalate / resume-recovery.
 		// These continuations are retries of the same turn (they do not advance
@@ -524,6 +557,13 @@ func (l *loop) run() {
 				continue
 			}
 			// recovery exhausted: surface the truncated turn as completion.
+		} else if exec.truncated {
+			// The output limit cut a tool call short. The call was answered with a
+			// "truncated" error instead of being run; with escalation on, the
+			// model retries under the raised cap, which stays until a turn fits.
+			if l.in.EscalateMaxTokens {
+				l.maxOutputTokensOverride = escalatedMaxTokens
+			}
 		} else {
 			l.maxOutputTokensOverride = 0
 		}
@@ -573,17 +613,7 @@ func (l *loop) run() {
 		}
 
 		// Tools were executed during streaming; record their results.
-		results := exec.results()
-		resultMsg := llm.Message{Role: llm.RoleUser, Content: results}
-		l.messages = append(l.messages, resultMsg)
-		l.record(resultMsg, llm.Usage{})
-		// Extra messages a tool injected after its result (e.g. the Skill tool's
-		// instructions as an independent user message) are appended next so the
-		// next model round sees them as standing guidance.
-		for _, em := range exec.extraMessages() {
-			l.messages = append(l.messages, em)
-			l.record(em, llm.Usage{})
-		}
+		l.appendToolResults(exec)
 		// Surface any background-task completions that landed during this turn so
 		// the next model round sees them alongside the tool results.
 		l.injectTaskNotifications()
@@ -644,6 +674,20 @@ func (l *loop) run() {
 		}
 		l.turnCount = nextTurn
 		l.lastContinue = ContinueNextTurn
+	}
+}
+
+// appendToolResults appends the turn's tool results to the conversation as one
+// user message, followed by any extra messages a tool injected after its result
+// (e.g. the Skill tool's instructions as an independent user message), so the
+// next model round sees them as standing guidance.
+func (l *loop) appendToolResults(exec *streamExec) {
+	resultMsg := llm.Message{Role: llm.RoleUser, Content: exec.results()}
+	l.messages = append(l.messages, resultMsg)
+	l.record(resultMsg, llm.Usage{})
+	for _, em := range exec.extraMessages() {
+		l.messages = append(l.messages, em)
+		l.record(em, llm.Usage{})
 	}
 }
 
@@ -898,13 +942,21 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 	var building bool
 	var curID, curName string
 	var curInput strings.Builder
-	finalizeTool := func() bool { // false = consumer stopped
+	// finalizeTool dispatches the call being assembled. stop is the turn's stop
+	// reason when it is already known (the event closing the call carries it, or
+	// the stream has ended), else "".
+	finalizeTool := func(stop string) bool { // false = consumer stopped
 		if !building {
 			return true
 		}
 		building = false
 		raw := strings.TrimSpace(curInput.String())
 		curInput.Reset()
+		// Arguments that stop mid-JSON on a max_tokens turn were cut off by the
+		// output limit. Running the call with "{}" in their place would fail it
+		// as "invalid input" and tell the model nothing about why, so it is
+		// answered with a truncation error instead and never runs.
+		truncated := stop == stopMaxTokens && raw != "" && !jsonValid(raw)
 		if raw == "" || !jsonValid(raw) {
 			raw = "{}"
 		}
@@ -912,7 +964,12 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 		if !l.emit(Event{Kind: KindToolUse, ToolUse: &block}) {
 			return false
 		}
-		exec.add(block)
+		if truncated {
+			exec.truncated = true
+			exec.addRefused(block, toolFailure(block, truncatedCallText, tool.CodeTruncated))
+		} else {
+			exec.add(block)
+		}
 		return exec.drain()
 	}
 
@@ -936,7 +993,13 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 			acc.Add(ev)
 			continue
 		}
-		if !finalizeTool() {
+		// A message_delta with no stop reason (usage only) does not close a
+		// call; the one that does carries the stop reason finalizeTool needs.
+		if ev.Type == llm.SEMessageDelta && ev.StopReason == "" {
+			acc.Add(ev)
+			continue
+		}
+		if !finalizeTool(ev.StopReason) {
 			return asst, exec, "", nil, true, false
 		}
 		switch ev.Type {
@@ -953,15 +1016,23 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 		}
 		acc.Add(ev)
 	}
-	if !finalizeTool() {
+	if err != nil {
+		// The stream broke. A call still being received is incomplete and is
+		// never dispatched. The calls that had fully arrived are already running:
+		// wait for them, so no tool outlives the loop, and hand back the turn as
+		// far as the last of them for the caller to record.
+		l.usage.Add(acc.Usage)
+		if cs, _ := exec.finish(); cs {
+			return asst, exec, "", nil, true, false
+		}
+		return dispatchedPrefix(acc.Message(), exec.count()), exec, acc.StopReason, err, false, false
+	}
+	if !finalizeTool(acc.StopReason) {
 		return asst, exec, "", nil, true, false
 	}
 	l.usage.Add(acc.Usage)
 	asst = acc.Message()
 	stopReason = acc.StopReason
-	if err != nil {
-		return asst, exec, stopReason, err, false, false
-	}
 	// Drain tools to completion (or synthesize on abort).
 	cs, ab := exec.finish()
 	if cs {
@@ -1013,6 +1084,23 @@ func (l *loop) completeAndExecute(req llm.CompletionRequest) (asst llm.Message, 
 		return asst, exec, stopReason, nil, true, false
 	}
 	return asst, exec, stopReason, nil, false, ab
+}
+
+// dispatchedPrefix cuts an assistant message short after its n-th tool call.
+// On a broken stream only what precedes the last dispatched call is known to
+// be complete: a later block may be half-received (a tool call with partial
+// arguments, a thinking block with no signature yet) and must not be replayed.
+func dispatchedPrefix(m llm.Message, n int) llm.Message {
+	seen := 0
+	for i, b := range m.Content {
+		if b.Type != llm.BlockToolUse {
+			continue
+		}
+		if seen++; seen == n {
+			return llm.Message{Role: m.Role, Content: m.Content[:i+1]}
+		}
+	}
+	return llm.Message{Role: m.Role}
 }
 
 func jsonValid(s string) bool {
