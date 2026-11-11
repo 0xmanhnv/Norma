@@ -1,6 +1,10 @@
 package compaction
 
-import "github.com/0xmanhnv/corvid/llm"
+import (
+	"encoding/json"
+
+	"github.com/0xmanhnv/corvid/llm"
+)
 
 // Reason says why a compaction that was due did not happen. The zero value
 // means it did.
@@ -206,5 +210,86 @@ func hasToolResult(m llm.Message) bool {
 
 // estimate is the local token estimate of msgs, on the scale count uses.
 func (c *Compactor) estimate(msgs []llm.Message) int {
-	return EstimateTokens(msgs) * 4 / 3
+	return c.scale(EstimateTokens(msgs))
+}
+
+// scale turns a raw count (characters / 4) into tokens with the calibration
+// factor: the configured one, else the one learned from the provider's usage,
+// else 4/3.
+func (c *Compactor) scale(raw int) int {
+	switch {
+	case c.cfg.TokenCalibration > 0:
+		return int(float64(raw) * c.cfg.TokenCalibration)
+	case c.learned > 0:
+		return int(float64(raw) * c.learned)
+	}
+	return raw * 4 / 3
+}
+
+// prefixRaw is the raw size (characters / 4) of the request prefix the loop
+// announced: system prompt, tool names, descriptions and schemas, and the
+// messages sent in front of the conversation. 0 when none was announced.
+func (c *Compactor) prefixRaw() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.hasPrefix {
+		return 0
+	}
+	chars := 0
+	for _, s := range c.prefix.System {
+		chars += len(s)
+	}
+	for _, t := range c.prefix.Tools {
+		chars += len(t.Name) + len(t.Description)
+		if b, err := json.Marshal(t.InputSchema); err == nil {
+			chars += len(b)
+		}
+	}
+	return chars/4 + EstimateTokens(c.prefix.Messages)
+}
+
+// prefixTokens is the size of what a request carries besides the
+// conversation: Config.StaticPrefixTokens when the host measured it, else an
+// estimate from the announced prefix.
+func (c *Compactor) prefixTokens() int {
+	if c.cfg.StaticPrefixTokens > 0 {
+		return c.cfg.StaticPrefixTokens
+	}
+	return c.scale(c.prefixRaw())
+}
+
+// Bounds on a learned calibration factor. A ratio outside them does not
+// describe how this content tokenizes: the reported count covers something the
+// estimate does not see (a prefix nobody announced), or the conversation is
+// too short to measure.
+const (
+	minLearnedCalibration = 1.0
+	maxLearnedCalibration = 3.0
+	minLearnRawTokens     = 1000
+)
+
+// learn calibrates the local estimate against the provider's own count.
+// reported is the total the previous response reported for the request plus
+// its output, which is what msgs now holds. The ratio between that and the raw
+// estimate of the same content is how many tokens this session's content
+// really takes per four characters; it replaces the default 4/3 for the
+// estimates made when no reported count is at hand (after a pass, and when
+// sizing the tail and what a pass frees). An explicit TokenCalibration wins.
+func (c *Compactor) learn(msgs []llm.Message, reported int) {
+	if reported <= 0 || c.cfg.TokenCalibration > 0 {
+		return
+	}
+	raw := EstimateTokens(llm.MessagesForAPI(msgs))
+	if raw < minLearnRawTokens {
+		return
+	}
+	var ratio float64
+	if c.cfg.StaticPrefixTokens > 0 {
+		ratio = float64(reported-c.cfg.StaticPrefixTokens) / float64(raw)
+	} else {
+		ratio = float64(reported) / float64(raw+c.prefixRaw())
+	}
+	if ratio >= minLearnedCalibration && ratio <= maxLearnedCalibration {
+		c.learned = ratio
+	}
 }

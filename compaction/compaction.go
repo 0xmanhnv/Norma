@@ -70,6 +70,21 @@ type Config struct {
 	// one, and by then the need is greater. Default: a tenth of the effective
 	// window; negative leaves the cool-down as the only way back.
 	BreakerRegrowth int
+	// StaticPrefixTokens is the measured size, in tokens, of what every
+	// request carries besides the conversation: the system prompt and the
+	// tool schemas. The local estimate only sees messages, so without it a
+	// session with a large tool list is counted tens of thousands of tokens
+	// short whenever the provider's own count is not available (the first
+	// request, and after every pass). Left zero it is estimated from the
+	// request prefix the loop announces (SetRequestPrefix).
+	StaticPrefixTokens int
+	// TokenCalibration scales the local estimate, which assumes four
+	// characters per token: tokens = characters / 4 × TokenCalibration. The
+	// default, 4/3, suits prose and code. Hex, base64 and dense JSON run
+	// closer to two characters per token: a session full of such tool output
+	// wants 2 or more. Left zero, the factor is learned from the provider's
+	// reported usage whenever a response carries it.
+	TokenCalibration float64
 	// OnEvent, when set, is called for every compaction pass and for every
 	// pass that was due and did not happen, with the reason (see Event). Both
 	// the passes Pre makes on its own and the ones Reactive is asked for go
@@ -164,6 +179,9 @@ type Compactor struct {
 	// rejected is set when Pre's summary was thrown away for not shrinking the
 	// view, so that a Reactive call in the same turn does not pay for another.
 	rejected bool
+	// learned is the calibration factor measured from the provider's reported
+	// usage (0 until one has been seen); see learn.
+	learned float64
 
 	// mu guards prefix and usage, which the loop's goroutine and a host
 	// reading TakeUsage may touch from different goroutines.
@@ -332,11 +350,15 @@ func (c *Compactor) predictiveOver(tok int) bool {
 // reported), it is preferred over local estimation — mirroring claude-code's
 // tokenCountWithEstimation. After a working-set mutation, callers pass 0 to force
 // a fresh per-block estimate.
+//
+// The estimate covers the whole request, not the messages alone: the static
+// prefix (system prompt and tool schemas) is added, and the character count is
+// scaled by the calibration factor (see estimate and prefixTokens).
 func (c *Compactor) count(msgs []llm.Message, lastInputTokens int) int {
 	if lastInputTokens > 0 {
 		return lastInputTokens
 	}
-	return EstimateTokens(llm.MessagesForAPI(msgs)) * 4 / 3
+	return c.estimate(llm.MessagesForAPI(msgs)) + c.prefixTokens()
 }
 
 // EstimateTokens approximates the token footprint of messages (~4 chars/token),
@@ -396,6 +418,7 @@ func (c *Compactor) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens
 		return msgs
 	}
 	c.rejected = false // a new turn
+	c.learn(msgs, lastInputTokens)
 	tok := c.count(msgs, lastInputTokens)
 	if tok <= c.microThreshold() {
 		return msgs
@@ -563,7 +586,7 @@ func (c *Compactor) microFreeable(msgs []llm.Message) int {
 			}
 		}
 	}
-	return chars / 4 * 4 / 3
+	return c.scale(chars / 4)
 }
 
 // microCompact is one MicroCompact pass: it clears the bodies of all COMPACTABLE
