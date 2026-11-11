@@ -395,6 +395,13 @@ func (l *loop) recordNewBoundary() {
 		return
 	}
 	if i := llm.LastBoundaryIndex(l.messages); i >= 0 {
+		if cr, ok := l.in.Recorder.(CompactionRecorder); ok {
+			if meta, ok := llm.ParseBoundaryMeta(l.messages[i]); ok {
+				cr.RecordCompaction(meta, l.messages[i:])
+				l.boundaryCount = c
+				return
+			}
+		}
 		if meta, ok := llm.ParseBoundaryMeta(l.messages[i]); ok {
 			l.in.Recorder.RecordBoundary(meta)
 		}

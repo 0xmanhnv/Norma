@@ -84,6 +84,11 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 - **A summary that does not shrink the context is thrown away** by the proactive
   pass as well as the reactive one, and a second summary is not requested on the
   same turn.
+- **A compaction is written to the transcript in one piece.** The boundary, the
+  summary and the kept tail were appended record by record; a crash part-way left a
+  boundary with only some of its tail, and a resume hid the rest of the history
+  behind it. They now go to the file in a single write
+  (`transcript.Writer.RecordCompaction`).
 - **Context overflow is recognised by the providers' error shapes.** Any error
   containing "too long" (an over-long tool name, a request that "took too long") was
   treated as an overflow and answered with a forced compaction.
@@ -128,6 +133,7 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 - `compaction.SummaryCall` / `SummaryCallFrom`, `Compactor.SetRequestPrefix` and
   `Compactor.TakeUsage`; `harness.RequestPrefixAware` and
   `harness.CompactionUsageReporter` for custom compactors.
+- `transcript.Writer.RecordCompaction` and `harness.CompactionRecorder`.
 - The guide [Keeping the prompt cache warm](docs/guides/prompt-caching.md).
 
 ### Changed

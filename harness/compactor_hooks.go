@@ -22,6 +22,16 @@ type CompactionUsageReporter interface {
 	TakeUsage() llm.Usage
 }
 
+// CompactionRecorder is optionally implemented by a Recorder that can persist
+// what a compaction leaves behind — the boundary and the messages after it —
+// as one unit. The loop then calls RecordCompaction once instead of
+// RecordBoundary followed by one RecordMessage per message, so a crash cannot
+// leave a boundary on disk with only part of the tail it hides the history
+// behind. msgs starts with the boundary marker.
+type CompactionRecorder interface {
+	RecordCompaction(meta llm.BoundaryMeta, msgs []llm.Message)
+}
+
 // announcePrefix hands the run's request prefix to a Compactor that asked for
 // it. schemas is the tool list the run sends.
 func (l *loop) announcePrefix(schemas []llm.ToolSchema) {

@@ -416,6 +416,47 @@ func (w *Writer) RecordBoundary(meta llm.BoundaryMeta) {
 	w.write(Record{Type: "boundary", Boundary: &m})
 }
 
+// RecordCompaction persists what a compaction leaves after its boundary — the
+// boundary record, then msgs (the boundary marker, the summary and the kept
+// tail) — as one append, which is one write to the file.
+//
+// Written record by record, a crash part-way left the boundary and the
+// summary on disk with only some of the tail behind them. On resume everything
+// before the boundary is hidden, so the missing tail messages were gone from
+// the model's view although they were in the file. In one write the set is
+// there whole or (the process dying inside the write aside) not at all, and a
+// resume without it falls back to the full history before the boundary.
+//
+// It implements harness.CompactionRecorder.
+func (w *Writer) RecordCompaction(meta llm.BoundaryMeta, msgs []llm.Message) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	recs := make([]Record, 0, len(msgs)+1)
+	last := w.last
+	add := func(r Record) {
+		r.SessionID = w.sessionID
+		r.AgentID = w.agentID
+		r.IsSidechain = w.isSidechain
+		r.UUID = newID()
+		r.ParentUUID = last
+		r.Timestamp = w.now().UTC().Format(time.RFC3339Nano)
+		last = r.UUID
+		recs = append(recs, r)
+	}
+	m := meta
+	add(Record{Type: "boundary", Boundary: &m})
+	for i := range msgs {
+		add(Record{Type: "message", Message: &msgs[i]})
+	}
+	if err := w.store.Append(w.path, recs...); err != nil {
+		if w.err == nil {
+			w.err = err
+		}
+		return
+	}
+	w.last = last
+}
+
 // newID returns a random 128-bit hex identifier.
 func newID() string {
 	var b [16]byte

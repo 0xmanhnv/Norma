@@ -224,3 +224,46 @@ func TestCompactionWorkingSetIsPersisted(t *testing.T) {
 		t.Fatalf("MessagesForAPI(persisted working set) = %+v, want to open with [summary, TAILMSG]", api)
 	}
 }
+
+// batchRecorder is a capRecorder that can take a compaction as one unit.
+type batchRecorder struct {
+	capRecorder
+	compactions [][]llm.Message
+}
+
+func (r *batchRecorder) RecordCompaction(_ llm.BoundaryMeta, msgs []llm.Message) {
+	r.compactions = append(r.compactions, append([]llm.Message(nil), msgs...))
+}
+
+// A Recorder that implements CompactionRecorder gets the boundary and
+// everything after it in ONE call, so it can persist them together; nothing of
+// that set is also sent message by message.
+func TestCompactionIsRecordedAsOneUnit(t *testing.T) {
+	m := &scriptedModel{turns: [][]llm.StreamEvent{textTurn("done")}}
+	rec := &batchRecorder{}
+	in := QueryInput{
+		Messages:       []llm.Message{llm.UserText("m1"), llm.UserText("m2"), llm.UserText("TAILMSG")},
+		Tools:          tool.NewRegistry(),
+		PermissionMode: permission.ModeBypass,
+		WorkingDir:     t.TempDir(),
+		Compactor:      &fakeCompactor{},
+		Recorder:       rec,
+	}
+	drain(t, in, QueryDeps{CallModel: m.call})
+
+	if len(rec.compactions) != 1 {
+		t.Fatalf("RecordCompaction calls=%d, want 1", len(rec.compactions))
+	}
+	set := rec.compactions[0]
+	if len(set) < 3 || !llm.IsBoundaryMarker(set[0]) || set[1].Text() != "[summary] DIGEST" || set[len(set)-1].Text() != "TAILMSG" {
+		t.Fatalf("the unit is not boundary + summary + tail: %+v", set)
+	}
+	if rec.boundaries != 0 {
+		t.Fatalf("RecordBoundary was also called (%d)", rec.boundaries)
+	}
+	for _, msg := range rec.msgs {
+		if llm.IsBoundaryMarker(msg) || msg.Text() == "[summary] DIGEST" {
+			t.Fatalf("part of the compaction was also recorded on its own: %+v", msg)
+		}
+	}
+}
