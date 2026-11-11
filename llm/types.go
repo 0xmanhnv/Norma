@@ -159,6 +159,12 @@ func (m Message) Text() string {
 }
 
 // Usage reports token accounting, including prompt-cache tokens (FR-03.8).
+//
+// InputTokens is the total input of the request, cached or not. CacheReadTokens
+// (served from the cache) and CacheWriteTokens (written to it) are parts of
+// that total, not additions to it: the full-price input is
+// InputTokens - CacheReadTokens - CacheWriteTokens. Every adapter normalizes to
+// this, so do not add the cache counts to InputTokens when pricing a request.
 type Usage struct {
 	InputTokens      int `json:"input_tokens"`
 	OutputTokens     int `json:"output_tokens"`

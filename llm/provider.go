@@ -128,6 +128,20 @@ type Config struct {
 	// Ignored by the Anthropic and Responses formats, which name the field
 	// themselves ("max_tokens" / "max_output_tokens").
 	MaxTokensField string
+	// CacheControl makes FormatOpenAI send prompt-cache markers: the system
+	// prompt and the marked messages go out with "content" as an array of text
+	// parts, the last of which carries "cache_control":{"type":"ephemeral"}
+	// (plus "ttl" when the request names one), at the same boundaries the
+	// Anthropic format uses. Turn it on for a gateway that serves a caching
+	// model (Claude, and others that take explicit breakpoints) through Chat
+	// Completions and reads the marker from content parts.
+	//
+	// Off by default: OpenAI's own endpoint caches automatically and takes no
+	// marker, and a strict OpenAI-compatible endpoint rejects the unknown
+	// field. Cache usage is read from the response either way. Ignored by the
+	// other formats (FormatAnthropic always marks, unless a request sets
+	// DisableCache).
+	CacheControl bool
 
 	limiter *rateLimiter // built from RateLimit by NewProvider; shared via the provider
 }
