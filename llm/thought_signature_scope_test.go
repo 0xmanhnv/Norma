@@ -29,7 +29,7 @@ func TestAnthropicRequestDropsThoughtSignature(t *testing.T) {
 
 	// Belt and braces: the field must be absent from the marshaled body, since
 	// that is what Anthropic actually parses.
-	encoded, err := anthropicMessages(mergeAdjacentSameRole(out), false, 0)
+	encoded, err := anthropicMessages(mergeAdjacentSameRole(out), false, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

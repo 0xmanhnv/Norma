@@ -48,7 +48,11 @@ func buildFor(t *testing.T, req CompletionRequest) []byte {
 // With caching off the messages encode exactly as before.
 func TestAnthropicNoCacheLeavesMessagesAlone(t *testing.T) {
 	msgs := []Message{usr(TextBlock("task")), asst(use("t1")), usr(result("t1", "out"))}
-	body := buildFor(t, CompletionRequest{Messages: msgs})
+	body := buildFor(t, CompletionRequest{Messages: msgs, System: []string{"sys"}, DisableCache: true,
+		Tools: []ToolSchema{{Name: "Bash", InputSchema: map[string]any{"type": "object"}}}})
+	if strings.Contains(string(body), "cache_control") {
+		t.Fatalf("DisableCache still marked a breakpoint: %s", body)
+	}
 	plain, _ := json.Marshal(msgs)
 	var got struct {
 		Messages json.RawMessage `json:"messages"`
@@ -88,12 +92,12 @@ func TestAnthropicCachePrefixMatchesAcrossTurns(t *testing.T) {
 	hist := []Message{usr(TextBlock("task")), asst(use("t1")), usr(result("t1", "first"))}
 	frame := TextBlock("FRAME 1")
 	req1 := append(append([]Message{}, hist[:2]...), usr(result("t1", "first"), frame))
-	b1, err := anthropicMessages(req1, true, 1)
+	b1, err := anthropicMessages(req1, true, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	req2 := append(append([]Message{}, hist...), asst(use("t2")), usr(result("t2", "second"), TextBlock("FRAME 2")))
-	b2, err := anthropicMessages(req2, true, 1)
+	b2, err := anthropicMessages(req2, true, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +127,7 @@ func TestAnthropicCachePrefixMatchesAcrossTurns(t *testing.T) {
 // Thinking blocks can't carry a breakpoint: the mark moves to the block before.
 func TestAnthropicCacheSkipsThinking(t *testing.T) {
 	msgs := []Message{usr(TextBlock("a"), ContentBlock{Type: BlockThinking, Thinking: "hmm", Signature: "s"})}
-	b, err := anthropicMessages(msgs, true, 0)
+	b, err := anthropicMessages(msgs, true, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,14 +169,15 @@ func TestAnthropicCacheMarksEndOfTools(t *testing.T) {
 	if n := strings.Count(string(body), `"cache_control"`); n != 4 {
 		t.Fatalf("%d breakpoints, want 4 (tools, system, previous tail, tail)", n)
 	}
-	if got := marked(buildFor(t, CompletionRequest{System: []string{"sys"}, Messages: msgs, Tools: tools})); len(got) != 0 {
+	if got := marked(buildFor(t, CompletionRequest{System: []string{"sys"}, Messages: msgs, Tools: tools, DisableCache: true})); len(got) != 0 {
 		t.Fatalf("caching off marked tools %v", got)
 	}
 }
 
 // CacheTTL sets the lifetime of the tools and system breakpoints only; the
-// conversation breakpoints keep the default, so every longer lifetime comes
-// before every shorter one, as Anthropic requires.
+// conversation breakpoints keep the default unless ConversationCacheTTL says
+// otherwise, so every longer lifetime comes before every shorter one, as
+// Anthropic requires.
 func TestAnthropicCacheTTLOnStableBreakpoints(t *testing.T) {
 	tools := []ToolSchema{{Name: "Bash", InputSchema: map[string]any{"type": "object"}}, {Name: "Read", InputSchema: map[string]any{"type": "object"}}}
 	msgs := []Message{usr(TextBlock("task")), asst(use("t1")), usr(result("t1", "first")), asst(use("t2")), usr(result("t2", "second"))}
@@ -218,9 +223,94 @@ func TestAnthropicCacheTTLOnStableBreakpoints(t *testing.T) {
 	if strings.Contains(string(buildFor(t, req)), `"ttl"`) {
 		t.Fatal("an unknown ttl was sent")
 	}
-	// Without caching (no boundary) nothing is marked whatever the ttl.
-	req.DynamicBoundary, req.CacheTTL = 0, "1h"
+	// With caching off nothing is marked whatever the ttl.
+	req.DisableCache, req.CacheTTL = true, "1h"
 	if strings.Contains(string(buildFor(t, req)), "cache_control") {
 		t.Fatal("ttl turned caching on")
 	}
+}
+
+// Caching is on without the host naming a boundary: the tools, the whole system
+// prompt and the conversation are marked, so a caller that sets nothing (a
+// subagent, a one-line session) still reads its prefix from the cache.
+func TestAnthropicCachesByDefault(t *testing.T) {
+	tools := []ToolSchema{{Name: "Bash", InputSchema: map[string]any{"type": "object"}}}
+	msgs := []Message{usr(TextBlock("task")), asst(use("t1")), usr(result("t1", "first"))}
+	body := buildFor(t, CompletionRequest{System: []string{"a", "b"}, Messages: msgs, Tools: tools})
+	var parsed struct {
+		Tools    []json.RawMessage `json:"tools"`
+		System   []json.RawMessage `json:"system"`
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.System) != 1 || !strings.Contains(string(parsed.System[0]), "cache_control") {
+		t.Fatalf("system prompt is not one cached block: %s", parsed.System)
+	}
+	if !strings.Contains(string(parsed.Tools[0]), "cache_control") {
+		t.Fatalf("tools are not marked: %s", parsed.Tools)
+	}
+	if !strings.Contains(string(parsed.Messages[2]), "cache_control") || !strings.Contains(string(parsed.Messages[0]), "cache_control") {
+		t.Fatalf("conversation is not marked: %s", parsed.Messages)
+	}
+	if n := strings.Count(string(body), `"cache_control"`); n != 4 {
+		t.Fatalf("%d breakpoints, want 4 (the provider's limit)", n)
+	}
+	// The system prompt bytes do not depend on whether caching is on.
+	off := buildFor(t, CompletionRequest{System: []string{"a", "b"}, Messages: msgs, Tools: tools, DisableCache: true})
+	if stripCacheControl(t, body) != stripCacheControl(t, off) {
+		t.Fatal("turning the cache off changed the request beyond its markers")
+	}
+}
+
+// One hour on the conversation puts one hour on everything before it: a
+// provider rejects a longer lifetime after a shorter one.
+func TestAnthropicConversationTTLRaisesStablePrefix(t *testing.T) {
+	tools := []ToolSchema{{Name: "Bash", InputSchema: map[string]any{"type": "object"}}}
+	msgs := []Message{usr(TextBlock("task")), asst(use("t1")), usr(result("t1", "first")), asst(use("t2")), usr(result("t2", "second"))}
+	req := CompletionRequest{System: []string{"sys", "dynamic"}, DynamicBoundary: 1, Messages: msgs, Tools: tools, ConversationCacheTTL: "1h"}
+	body := string(buildFor(t, req))
+	if n, m := strings.Count(body, `"cache_control"`), strings.Count(body, `"ttl":"1h"`); n != 4 || m != 4 {
+		t.Fatalf("%d breakpoints, %d at one hour; want 4 and 4: %s", n, m, body)
+	}
+	// An explicit five minutes on the stable prefix cannot stay in front of a
+	// one-hour conversation.
+	req.CacheTTL = "5m"
+	if body = string(buildFor(t, req)); strings.Contains(body, `"ttl":"5m"`) {
+		t.Fatalf("a five-minute marker precedes a one-hour one: %s", body)
+	}
+	// Five minutes on the conversation leaves a one-hour prefix alone.
+	req.CacheTTL, req.ConversationCacheTTL = "1h", "5m"
+	body = string(buildFor(t, req))
+	if n, m := strings.Count(body, `"ttl":"1h"`), strings.Count(body, `"ttl":"5m"`); n != 2 || m != 2 {
+		t.Fatalf("%d one-hour and %d five-minute markers, want 2 and 2: %s", n, m, body)
+	}
+}
+
+// stripCacheControl re-encodes a request body without its cache markers, so
+// two bodies can be compared for everything else.
+func stripCacheControl(t *testing.T, body []byte) string {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(any)
+	walk = func(x any) {
+		switch n := x.(type) {
+		case map[string]any:
+			delete(n, "cache_control")
+			for _, c := range n {
+				walk(c)
+			}
+		case []any:
+			for _, c := range n {
+				walk(c)
+			}
+		}
+	}
+	walk(v)
+	out, _ := json.Marshal(v)
+	return string(out)
 }
