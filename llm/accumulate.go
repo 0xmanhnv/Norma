@@ -8,7 +8,7 @@ import (
 // Accumulator reassembles a complete assistant Message from a stream of
 // normalized StreamEvents. The harness feeds every event to Add; once the
 // stream ends, Message returns the finished assistant turn (text, thinking, and
-// tool_use blocks in arrival order).
+// redacted-thinking and tool_use blocks in arrival order).
 type Accumulator struct {
 	blocks     []ContentBlock
 	toolInputs []*strings.Builder
@@ -45,7 +45,18 @@ func (a *Accumulator) Add(ev StreamEvent) {
 		}
 		a.thinkBuf.WriteString(ev.Text)
 	case SEThinkingSignature:
+		// A signature can arrive for a block that streamed no text. Open the
+		// block here so the signature is kept with it instead of being dropped
+		// (or carried over to a later block).
+		if a.thinkBuf == nil {
+			a.flushText()
+			a.thinkBuf = &strings.Builder{}
+		}
 		a.thinkSig = ev.Text
+	case SERedactedThinking:
+		a.flushText()
+		a.flushThinking()
+		a.blocks = append(a.blocks, ContentBlock{Type: BlockRedactedThinking, Data: ev.Text})
 	case SEToolUseStart:
 		a.flushText()
 		a.flushThinking()
@@ -91,7 +102,9 @@ func (a *Accumulator) flushText() {
 
 func (a *Accumulator) flushThinking() {
 	if a.thinkBuf != nil {
-		if s := a.thinkBuf.String(); s != "" {
+		// Kept when it has text or a signature: a signed block with empty text
+		// must be replayed as it came.
+		if s := a.thinkBuf.String(); s != "" || a.thinkSig != "" {
 			a.blocks = append(a.blocks, ContentBlock{
 				Type:      BlockThinking,
 				Thinking:  s,

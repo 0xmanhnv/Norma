@@ -27,6 +27,10 @@ const (
 	BlockThinking   BlockType = "thinking"
 	BlockToolUse    BlockType = "tool_use"
 	BlockToolResult BlockType = "tool_result"
+	// BlockRedactedThinking is reasoning the provider returned encrypted (Data).
+	// It has no readable text; it is kept and replayed unchanged, because the
+	// provider expects the turn's reasoning blocks back exactly as it sent them.
+	BlockRedactedThinking BlockType = "redacted_thinking"
 )
 
 // ContentBlock is one piece of message content. Which fields are populated
@@ -39,9 +43,14 @@ type ContentBlock struct {
 
 	// Thinking block (extended thinking). Anthropic requires the field to be
 	// named "thinking" (not "text") and requires "signature" when replaying
-	// the block in multi-turn history.
+	// the block in multi-turn history. The text may be empty (a model can be
+	// configured to omit it and return the signature alone); the block is still
+	// kept, and MarshalJSON writes the "thinking" key for it regardless.
 	Thinking  string `json:"thinking,omitempty"`
 	Signature string `json:"signature,omitempty"`
+
+	// Data is the opaque payload of a redacted_thinking block.
+	Data string `json:"data,omitempty"`
 
 	// ToolUse: a model request to invoke a tool.
 	ID    string          `json:"id,omitempty"`
@@ -85,6 +94,22 @@ type ContentBlock struct {
 	// Anthropic adapter, which marshals blocks directly, clears it), and the
 	// model sees only Content. Nil on success and on errors nothing classified.
 	ToolError *ToolError `json:"tool_error,omitempty"`
+}
+
+// MarshalJSON encodes the block. It differs from the default encoding in one
+// case: a thinking block always carries its "thinking" key, even when the text
+// is empty. A thinking block without that key is malformed on the wire, and a
+// block with a signature and no text is a legitimate one to replay.
+func (b ContentBlock) MarshalJSON() ([]byte, error) {
+	if b.Type == BlockThinking && b.Thinking == "" {
+		return json.Marshal(struct {
+			Type      BlockType `json:"type"`
+			Thinking  string    `json:"thinking"`
+			Signature string    `json:"signature,omitempty"`
+		}{b.Type, "", b.Signature})
+	}
+	type plain ContentBlock // drops the method, so this does not recurse
+	return json.Marshal(plain(b))
 }
 
 // TextBlock builds a text content block.
