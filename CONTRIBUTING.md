@@ -53,8 +53,9 @@ by a scripted provider through `harness.QueryDeps`, tools run in temp dirs, and 
 MCP client talks over in-memory pipes. If a change needs the network to be tested, it
 probably needs a seam instead.
 
-Format any file you touch with `gofmt -w <file>` (or `gofmt -w .`). CI is not wired up,
-so these local checks are the gate.
+Format any file you touch with `gofmt -w <file>` (or `gofmt -w .`). CI runs the same
+four checks on every pull request (`.github/workflows/ci.yml`), plus `go test -race ./...`
+as a job that does not block a merge yet; run them locally first.
 
 ## Repository layout
 
