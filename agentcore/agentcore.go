@@ -260,7 +260,8 @@ type Session struct {
 	compactor harness.Compactor
 	planCtrl  *plan.Controller
 	messages  []llm.Message
-	usage     llm.Usage
+	usage     llm.Usage // running total for the session (Usage)
+	lastUsage llm.Usage // the most recent Prompt alone (LastUsage)
 
 	sessionID string
 	store     *transcript.Store
@@ -374,11 +375,19 @@ func (s *Session) Close() error {
 // Messages returns the conversation history.
 func (s *Session) Messages() []llm.Message { return s.messages }
 
-// Usage returns cumulative token usage.
+// Usage returns the token usage of the whole session: the running total over
+// every Prompt, and after Resume the usage the transcript recorded plus what
+// has been spent since. Reset zeroes it. It counts this session's own model
+// calls; what subagents spent is reported on each Terminal (SubagentUsage).
 func (s *Session) Usage() llm.Usage { return s.usage }
 
+// LastUsage returns the token usage of the most recent Prompt alone (the same
+// figure as that prompt's Terminal.Usage). Zero before the first Prompt and
+// after Resume or Reset.
+func (s *Session) LastUsage() llm.Usage { return s.lastUsage }
+
 // Reset clears the conversation.
-func (s *Session) Reset() { s.messages = nil; s.usage = llm.Usage{} }
+func (s *Session) Reset() { s.messages = nil; s.usage = llm.Usage{}; s.lastUsage = llm.Usage{} }
 
 // SessionID returns the transcript session id (empty if persistence is off).
 func (s *Session) SessionID() string { return s.sessionID }
@@ -390,55 +399,84 @@ func (s *Session) UnlockSet() *tool.UnlockSet { return s.unlock }
 // Resume reloads a prior conversation from the transcript store, rebuilding the
 // message history and cumulative usage so the next Prompt continues it. Requires
 // Options.Transcript to be set. Subsequent messages append to the same file.
+//
+// A transcript line that cannot be read (in practice the last one, when the
+// process died while writing it) is skipped and reported through
+// Options.OnWarn. If the conversation ends in tool calls with no recorded
+// result, they are answered with a result saying the call was interrupted and
+// may have run (see interruptedResults); that message is appended to the
+// transcript too, so the file and the session stay in step.
 func (s *Session) Resume(sessionID string) error {
 	if s.store == nil {
 		return llm.NewError(llm.CodeInvalidConfig, "agentcore: Resume requires Options.Transcript")
 	}
-	recs, err := s.store.Load(s.store.MainPath(sessionID))
+	recs, skipped, err := s.store.LoadReport(s.store.MainPath(sessionID))
 	if err != nil {
 		return err
 	}
+	for _, k := range skipped {
+		s.warn(k.String())
+	}
 	msgs, usage := transcript.Messages(recs)
-	s.messages = cleanResumed(msgs)
+	s.messages = msgs
 	s.usage = usage
+	s.lastUsage = llm.Usage{}
 	s.sessionID = sessionID
 	s.writer = s.store.ResumeWriter(sessionID, transcript.LastUUID(recs))
+	s.answerInterruptedTail()
 	return nil
 }
 
-// cleanResumed drops trailing assistant tool calls whose results were never
-// persisted — a crash mid-tool would otherwise leave a dangling tool_use that
-// the API rejects.
-// dropUnpairedTail removes a trailing tool exchange that didn't finish: an
-// assistant turn whose tool calls are not all answered, with any partial
-// results after it. Providers reject a request whose tool calls and results
-// don't pair up.
-func dropUnpairedTail(msgs []llm.Message) []llm.Message {
-	for len(msgs) > 0 {
-		last := msgs[len(msgs)-1]
-		if last.Role == llm.RoleAssistant && len(last.ToolUses()) > 0 {
-			msgs = msgs[:len(msgs)-1]
+// interruptedCallText answers a tool call whose result was never recorded.
+const interruptedCallText = "Interrupted: the session stopped before a result for this call was recorded. " +
+	"The call MAY have executed. Check the current state before repeating it."
+
+// interruptedResults looks at the end of msgs for a tool exchange that did not
+// finish — an assistant turn whose tool calls are not all answered, with any
+// partial results after it — and returns the user message that answers the
+// open calls. ok is false when the conversation ends cleanly.
+//
+// The calls are answered, not dropped: a tool whose result is missing may
+// still have run, and a model that no longer sees the call would simply issue
+// it again. The result tells it to check first. Appending the message also
+// restores the pairing providers require (every tool call answered before the
+// next turn).
+func interruptedResults(msgs []llm.Message) (m llm.Message, ok bool) {
+	answered := map[string]bool{}
+	i := len(msgs) - 1
+	for ; i >= 0 && msgs[i].Role == llm.RoleUser && hasToolResults(msgs[i]); i-- {
+		for _, b := range msgs[i].Content {
+			if b.Type == llm.BlockToolResult {
+				answered[b.ToolUseID] = true
+			}
+		}
+	}
+	if i < 0 || msgs[i].Role != llm.RoleAssistant {
+		return m, false
+	}
+	m.Role = llm.RoleUser
+	for _, u := range msgs[i].ToolUses() {
+		if answered[u.ID] {
 			continue
 		}
-		if last.Role == llm.RoleUser && len(msgs) >= 2 && hasToolResults(last) {
-			answered := map[string]bool{}
-			for _, b := range last.Content {
-				if b.Type == llm.BlockToolResult {
-					answered[b.ToolUseID] = true
-				}
-			}
-			complete := true
-			for _, u := range msgs[len(msgs)-2].ToolUses() {
-				complete = complete && answered[u.ID]
-			}
-			if !complete {
-				msgs = msgs[:len(msgs)-1]
-				continue
-			}
-		}
-		break
+		r := llm.ToolResultText(u.ID, interruptedCallText, true)
+		r.ToolError = &llm.ToolError{Name: u.Name, Code: tool.CodeInterrupted}
+		m.Content = append(m.Content, r)
 	}
-	return msgs
+	return m, len(m.Content) > 0
+}
+
+// answerInterruptedTail closes an unfinished tool exchange at the end of the
+// session's conversation (interruptedResults), in memory and in the transcript.
+func (s *Session) answerInterruptedTail() {
+	m, ok := interruptedResults(s.messages)
+	if !ok {
+		return
+	}
+	s.messages = append(s.messages, m)
+	if s.writer != nil {
+		s.writer.RecordMessage(m, llm.Usage{})
+	}
 }
 
 func hasToolResults(m llm.Message) bool {
@@ -448,18 +486,6 @@ func hasToolResults(m llm.Message) bool {
 		}
 	}
 	return false
-}
-
-func cleanResumed(msgs []llm.Message) []llm.Message {
-	for len(msgs) > 0 {
-		last := msgs[len(msgs)-1]
-		if last.Role == llm.RoleAssistant && len(last.ToolUses()) > 0 {
-			msgs = msgs[:len(msgs)-1]
-			continue
-		}
-		break
-	}
-	return msgs
 }
 
 // buildSystemReminder assembles the <system-reminder> content. Today's date is
@@ -598,12 +624,12 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 	// early would otherwise leave s.messages before this prompt, out of step with
 	// the transcript, and the next Prompt would resend a history without it.
 	in.OnExit = func(t *harness.Terminal) {
-		msgs := t.Messages
+		s.messages = t.Messages
 		if t.Reason == harness.ReasonConsumerStopped {
-			msgs = dropUnpairedTail(msgs)
+			s.answerInterruptedTail()
 		}
-		s.messages = msgs
-		s.usage = t.Usage
+		s.usage.Add(t.Usage)
+		s.lastUsage = t.Usage
 	}
 	inner := harness.Query(ctx, in, s.opts.Deps)
 	return func(yield func(harness.Event, error) bool) {
