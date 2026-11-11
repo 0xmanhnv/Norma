@@ -8,7 +8,8 @@ The crow is the name: corvids are the crow family.
 
 | File | Use |
 |---|---|
-| `mark-light.svg`, `mark-dark.svg` | The crow alone, for light and dark backgrounds |
+| `mark-light.svg`, `mark-dark.svg` | The crow alone, for light and dark backgrounds, at 40 px and up |
+| `mark-small-light.svg`, `mark-small-dark.svg` | The crow as one flat shape, for anything under 40 px |
 | `wordmark-light.svg`, `wordmark-dark.svg` | The name alone |
 | `banner-light.svg`, `banner-dark.svg` | README header (crow, name and tagline) |
 | `icon.svg` | Square icon for avatars and favicons; the crow on a dark tile, no legs |
@@ -21,15 +22,25 @@ The README picks the banner that matches the reader's theme with a `<picture>` e
 | Role | Light | Dark |
 |---|---|---|
 | Ink (wordmark) | `#1F2328` | `#E6EDF3` |
-| Folds (darkest first) | `#1F2328`, `#2A2F35`, `#353B42`, `#58616C` | `#3A424C`, `#454D57`, `#4F5863`, `#7C8692` |
+| Folds (darkest first) | `#1F2328`, `#2A2F35`, `#353B42`, `#58616C` | `#5A636E`, `#646D78`, `#6E7884`, `#9AA3AD` |
 | Beak and the dot on the *i* | `#00ADD8` | `#22C4E8` |
 | Beak highlight (55% opacity) | `#7FE3F5` | `#B8F2FC` |
 | Eye | `#F2F4F6` | `#E6EDF3` |
 | Tagline | `#57606A` | `#8B949E` |
 | Background | `#F6F8FA` | `#0D1117` |
 
-`icon.svg` sits on a `#1F2328` tile and uses its own lighter folds (`#5A636E`,
-`#646D78`, `#6E7884`, `#9AA3AD`) with the dark-theme beak.
+`icon.svg` sits on a `#1F2328` tile and uses the dark-theme folds and beak.
+
+Every dark fold is at least 3:1 against the `#0D1117` background, so the whole crow
+reads there, not only its lightest fold.
+
+## Small sizes
+
+Below 40 px the four greys run together and the legs disappear. Use the small mark
+there: the same outline as one flat shape (`#1F2328` on light, `#9AA3AD` on dark), the
+beak in the accent colour, a larger eye, no legs and no highlight. Do not scale the
+folded crow down instead, and do not use the small mark where there is room for the
+folds.
 
 The beak colour is the one accent. It appears once in the mark (with its highlight)
 and once in the wordmark, and nowhere else.
