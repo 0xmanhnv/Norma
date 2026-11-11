@@ -458,6 +458,7 @@ func (l *loop) run() {
 			schemas = filterToolSchemas(schemas, l.in.DeferredTools)
 		}
 	}
+	l.announcePrefix(schemas)
 	l.turnCount = 1 // the first model call is turn 1
 	l.boundaryCount = countBoundaries(l.messages)
 	l.startTime = time.Now() // wall-clock baseline for MaxDuration
@@ -489,6 +490,7 @@ func (l *loop) run() {
 		// Non-destructive proactive compaction (MicroCompact → AutoCompact).
 		if l.in.Compactor != nil {
 			l.messages = l.in.Compactor.Pre(l.ctx, l.messages, l.lastInputTokens)
+			l.absorbCompactionUsage()
 			l.recordNewBoundary()
 		}
 
@@ -515,11 +517,13 @@ func (l *loop) run() {
 			if l.in.Compactor != nil && l.in.Compactor.IsOverflow(streamErr) && !l.hasAttemptedReactiveCompact {
 				l.hasAttemptedReactiveCompact = true
 				if msgs, ok := l.in.Compactor.Reactive(l.ctx, l.messages); ok {
+					l.absorbCompactionUsage()
 					l.messages = msgs
 					l.recordNewBoundary()
 					l.lastContinue = ContinueReactiveCompactRetry
 					continue
 				}
+				l.absorbCompactionUsage()
 				l.finish(ReasonPromptTooLong, streamErr, "")
 				return
 			}

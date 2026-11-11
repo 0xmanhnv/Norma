@@ -23,6 +23,7 @@ package compaction
 import (
 	"context"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/0xmanhnv/corvid/llm"
@@ -30,7 +31,11 @@ import (
 )
 
 // Summarizer condenses messages into a digest. Injected so the host controls
-// which model summarizes (and so tests can mock).
+// which model summarizes (and so tests can mock). msgs is the part of the
+// conversation the summary replaces. The context carries a SummaryCall
+// (SummaryCallFrom) with the run's request prefix and the whole conversation,
+// for a summarizer that shares the run's prompt cache, and takes the usage of
+// the call (SummaryCall.AddUsage).
 type Summarizer func(ctx context.Context, msgs []llm.Message) (string, error)
 
 // Config tunes the compactor.
@@ -49,6 +54,14 @@ type Config struct {
 	// cool-down. Default five minutes; negative keeps the breaker open for the
 	// rest of the session.
 	BreakerCooldown time.Duration
+	// Summarizer, when set, replaces the summarizer passed to New. It is how a
+	// host that builds its session through agentcore.Options.Compaction picks
+	// its own: StandaloneSummarizer(cheapProvider, ...) summarizes with a
+	// separate, cheaper model. The default (ProviderSummarizer on the session's
+	// provider) summarizes over the run's own prefix and reads its prompt
+	// cache, which a different model cannot do — weigh a cheaper model's price
+	// against paying for the history uncached.
+	Summarizer Summarizer
 }
 
 func (c *Config) defaults() {
@@ -109,12 +122,60 @@ type Compactor struct {
 	tripped bool
 	retryAt time.Time
 	now     func() time.Time // the clock; replaced in tests
+
+	// mu guards prefix and usage, which the loop's goroutine and a host
+	// reading TakeUsage may touch from different goroutines.
+	mu        sync.Mutex
+	prefix    llm.CompletionRequest
+	hasPrefix bool
+	usage     llm.Usage // summary usage not yet taken
 }
 
 // New builds a Compactor. summarize may be nil to disable AutoCompact.
 func New(cfg Config, summarize Summarizer) *Compactor {
 	cfg.defaults()
+	if cfg.Summarizer != nil {
+		summarize = cfg.Summarizer
+	}
 	return &Compactor{cfg: cfg, summarize: summarize, now: time.Now}
+}
+
+// SetRequestPrefix tells the compactor what every model request of the run
+// starts with: its system prompt, tools and session settings, and in
+// prefix.Messages whatever the loop sends in front of the conversation. The
+// harness loop calls it when a run starts (harness.RequestPrefixAware). The
+// summarizer builds its request on it so that it reads the run's prompt cache.
+func (c *Compactor) SetRequestPrefix(prefix llm.CompletionRequest) {
+	c.mu.Lock()
+	c.prefix, c.hasPrefix = prefix, true
+	c.mu.Unlock()
+}
+
+// TakeUsage returns what the summary calls made since the last TakeUsage cost,
+// and resets the count. The harness loop adds it to the run's usage
+// (harness.CompactionUsageReporter); a host driving the compactor itself can
+// call it after Pre or Reactive.
+func (c *Compactor) TakeUsage() llm.Usage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	u := c.usage
+	c.usage = llm.Usage{}
+	return u
+}
+
+// summaryCall builds the SummaryCall for a summary over msgs. overflowed is
+// true when the run's last request was rejected for size: the conversation
+// offered to the summarizer is then only the part being summarized.
+func (c *Compactor) summaryCall(msgs, head []llm.Message, overflowed bool) *SummaryCall {
+	c.mu.Lock()
+	call := &SummaryCall{Prefix: c.prefix, HasPrefix: c.hasPrefix}
+	c.mu.Unlock()
+	if overflowed {
+		call.Conversation = pairForReplay(head)
+	} else {
+		call.Conversation = llm.MessagesForAPI(msgs)
+	}
+	return call
 }
 
 // --- circuit breaker ---
@@ -385,7 +446,11 @@ func (c *Compactor) autoCompact(ctx context.Context, msgs []llm.Message, preTok 
 	if len(toSummarize) == 0 {
 		return msgs, false
 	}
-	summary, err := c.summarize(ctx, toSummarize)
+	call := c.summaryCall(msgs, toSummarize, trigger == "reactive")
+	summary, err := c.summarize(context.WithValue(ctx, summaryCallKey{}, call), toSummarize)
+	c.mu.Lock()
+	c.usage.Add(call.usage)
+	c.mu.Unlock()
 	if err != nil {
 		// A cancelled run is not a summarizer failure: counting it would open
 		// the breaker on a session that was merely interrupted.
