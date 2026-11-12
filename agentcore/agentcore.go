@@ -179,6 +179,10 @@ type Options struct {
 	// StopCheck, when set, can end a run before any model call with a reason of
 	// the host's (see harness.QueryInput.StopCheck).
 	StopCheck func(ctx context.Context, st harness.RunState) *harness.StopRequest
+	// Budget, when set, is a hard spending limit shared by every Prompt of the
+	// session and every subagent they start (see harness.QueryInput.Budget and
+	// harness.NewBudget).
+	Budget harness.Budget
 	// MaxTokens is the output cap of each request; 0 uses
 	// ModelSettings.MaxOutputTokens, and the adapter's default when that is 0 too
 	// (see harness.QueryInput.MaxTokens).
@@ -626,6 +630,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		MaxDuration:        s.opts.MaxDuration,
 		Settlement:         s.opts.Settlement,
 		StopCheck:          s.opts.StopCheck,
+		Budget:             s.opts.Budget,
 		MaxConcurrency:     s.opts.MaxConcurrency,
 		WorkingDir:         s.opts.WorkingDir,
 		Todos:              s.opts.Todos,

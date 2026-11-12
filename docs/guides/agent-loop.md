@@ -109,7 +109,7 @@ Every exit carries a typed `TerminalReason` on the final `KindResult` event
 (`harness/event.go`): `completed`, `max_turns`, `timeout`, `model_error`,
 `refusal`, `prompt_too_long`, `aborted_streaming`, `aborted_tools`,
 `stop_hook_prevented`, `hook_stopped`, `blocking_limit`, `image_error`,
-`stop_requested`, `context_exhausted`. The `Terminal`
+`stop_requested`, `budget_exhausted`, `context_exhausted`. The `Terminal`
 struct also carries the error (if any), the stop reason the provider gave for the
 last model turn (`StopReason`), the run's own usage, what its subagents used
 (`SubagentUsage`, kept separate), the turn count, a full message snapshot, and the
@@ -122,7 +122,7 @@ transcript had recorded, and `Session.LastUsage()` is the most recent prompt alo
 
 `QueryInput.StopCheck` is called before every model call, after compaction has had
 its turn. It sees a `RunState` (turn number, messages, the last reported request
-size, usage so far) and can return a `StopRequest` to end the run there:
+size, usage so far, and what finished subagents have spent) and can return a `StopRequest` to end the run there:
 
 ```go
 in.StopCheck = func(ctx context.Context, st harness.RunState) *harness.StopRequest {
@@ -145,6 +145,30 @@ an error carrying `llm.CodeContextOverflow` unless the request names its own; a
 request with no reason ends as `stop_requested`. Use it when you know the run cannot
 go on (compacting again would free nothing, a spending limit is reached) instead of
 waiting for the provider to reject a request.
+
+## A hard spending limit
+
+`QueryInput.Budget` (`Options.Budget` on a `Session`) is a limit the run shares with
+every subagent it starts: a child started from a tool call charges the same `Budget`
+(it travels in `harness.ParentRun`; `subagent.Config.Budget` sets it for a run with no
+parent, such as the coordinator's). The loop reports what each model response cost
+(`Spend`), before any tool call of that response starts, and asks before every model
+call whether another may be made (`Exhausted`). A non-nil answer ends the run with
+`budget_exhausted` (or the request's own reason) and no wrap-up phase. Fanning work
+out to subagents therefore cannot overrun it. `harness.NewBudget` adds the usage up
+and leaves the measure to the host, so a cost cap uses the host's own price table:
+
+```go
+budget := harness.NewBudget(func(total llm.Usage) *harness.StopRequest {
+    if priceUSD(total) >= 2.00 {
+        return &harness.StopRequest{Detail: "cost cap of $2.00 reached"}
+    }
+    return nil
+})
+```
+
+A response's usage is known only when the provider reports it, so the limit can be
+passed by at most the one response in flight.
 
 ## Output cap
 

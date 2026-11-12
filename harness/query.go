@@ -57,6 +57,14 @@ type QueryInput struct {
 	// Tools see it in permission.Context, hooks through
 	// permission.PolicyFrom(ctx), and subagents inherit it.
 	Policy permission.Policy
+	// Budget, when non-nil, is a spending limit the run shares with every
+	// agent it starts from a tool call (subagents inherit it through
+	// ParentRun). The loop reports what each model call cost (Spend) and asks
+	// before every model call whether another may be made (Exhausted); a
+	// non-nil answer ends the run with that StopRequest. Because a child
+	// charges the same Budget as it goes, fanning work out to subagents cannot
+	// overrun it. See NewBudget.
+	Budget Budget
 	// DeferredTools names tools whose schemas are withheld from the model's tool
 	// list (they stay in Tools and are invoked via ExecuteExtraTool). Empty = all
 	// tool schemas sent as usual.
@@ -228,6 +236,50 @@ type RunState struct {
 	LastInputTokens int
 	// Usage is what the run has spent so far.
 	Usage llm.Usage
+	// SubagentUsage is what the agents this run started from tool calls have
+	// spent so far (reported when each one finishes).
+	SubagentUsage llm.Usage
+}
+
+// Budget is a spending limit shared by a run and the agents it starts. Both
+// methods are called from several runs at once and must be safe for
+// concurrent use.
+type Budget interface {
+	// Spend records usage the run has spent since its last report: one or
+	// more model calls, compaction summaries included.
+	Spend(u llm.Usage)
+	// Exhausted is asked before every model call; non-nil ends the run.
+	Exhausted() *StopRequest
+}
+
+// NewBudget returns a Budget that adds up every Spend and asks limit about
+// the total. limit turns usage into the host's measure (tokens, or money with
+// the host's price table) and returns non-nil once no further model call may
+// be made. The usual reason is ReasonBudgetExhausted.
+func NewBudget(limit func(total llm.Usage) *StopRequest) Budget {
+	return &sharedBudget{limit: limit}
+}
+
+type sharedBudget struct {
+	mu    sync.Mutex
+	total llm.Usage
+	limit func(llm.Usage) *StopRequest
+}
+
+func (b *sharedBudget) Spend(u llm.Usage) {
+	b.mu.Lock()
+	b.total.Add(u)
+	b.mu.Unlock()
+}
+
+func (b *sharedBudget) Exhausted() *StopRequest {
+	b.mu.Lock()
+	total := b.total
+	b.mu.Unlock()
+	if b.limit == nil {
+		return nil
+	}
+	return b.limit(total)
 }
 
 // StopRequest ends a run from QueryInput.StopCheck.
@@ -324,6 +376,9 @@ func Query(ctx context.Context, in QueryInput, deps QueryDeps) iter.Seq2[Event, 
 		l := &loop{ctx: permission.WithPolicy(ctx, in.Policy), in: in, deps: deps, yield: yield, sem: make(chan struct{}, conc)}
 		l.messages = append([]llm.Message(nil), in.Messages...)
 		l.run()
+		if in.Budget != nil {
+			l.chargeBudget()
+		}
 		if in.OnExit != nil {
 			t := l.terminal
 			if t == nil {
@@ -344,6 +399,8 @@ type budgetTracker struct {
 
 type loop struct {
 	ctx context.Context
+	// charged is the part of usage already reported to QueryInput.Budget.
+	charged llm.Usage
 	// subUsage sums SubagentUsage reported by tool results; tools run on their own
 	// goroutines, hence the lock.
 	subMu    sync.Mutex
@@ -616,8 +673,18 @@ func (l *loop) run() {
 			l.absorbCompactionUsage()
 			l.recordNewBoundary()
 		}
+		if l.in.Budget != nil {
+			l.chargeBudget()
+			if stop := l.in.Budget.Exhausted(); stop != nil {
+				if stop.Reason == "" {
+					stop.Reason = ReasonBudgetExhausted
+				}
+				l.finishStopped(stop)
+				return
+			}
+		}
 		if l.in.StopCheck != nil {
-			st := RunState{Turn: iterations, Messages: l.messages, LastInputTokens: l.lastInputTokens, Usage: l.usage}
+			st := RunState{Turn: iterations, Messages: l.messages, LastInputTokens: l.lastInputTokens, Usage: l.usage, SubagentUsage: l.subagentUsage()}
 			if stop := l.in.StopCheck(l.ctx, st); stop != nil {
 				l.finishStopped(stop)
 				return
@@ -1120,7 +1187,7 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 	// finalizeTool dispatches the call being assembled. stop is the turn's stop
 	// reason when it is already known (the event closing the call carries it, or
 	// the stream has ended), else "".
-	finalizeTool := func(stop string) bool { // false = consumer stopped
+	finalizeTool := func(stop string, closing llm.Usage) bool { // false = consumer stopped
 		if !building {
 			return true
 		}
@@ -1143,6 +1210,15 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 			exec.truncated = true
 			exec.addRefused(block, toolFailure(block, truncatedCallText, tool.CodeTruncated))
 		} else {
+			if l.in.Budget != nil {
+				// Charge what this response has cost so far before the call
+				// starts: a subagent it starts must see the parent's spend.
+				u := acc.Usage
+				u.MergeEcho(closing)
+				total := l.usage
+				total.Add(u)
+				l.chargeBudgetTo(total)
+			}
 			exec.add(block)
 		}
 		return exec.drain()
@@ -1174,7 +1250,7 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 			acc.Add(ev)
 			continue
 		}
-		if !finalizeTool(ev.StopReason) {
+		if !finalizeTool(ev.StopReason, ev.Usage) {
 			return asst, exec, "", nil, true, false
 		}
 		switch ev.Type {
@@ -1202,7 +1278,7 @@ func (l *loop) streamAndExecute(schemas []llm.ToolSchema) (asst llm.Message, exe
 		}
 		return dispatchedPrefix(acc.Message(), exec.count()), exec, acc.StopReason, err, false, false
 	}
-	if !finalizeTool(acc.StopReason) {
+	if !finalizeTool(acc.StopReason, llm.Usage{}) {
 		return asst, exec, "", nil, true, false
 	}
 	l.usage.Add(acc.Usage)
@@ -1230,6 +1306,9 @@ func (l *loop) completeAndExecute(req llm.CompletionRequest) (asst llm.Message, 
 		return asst, exec, "", cerr, false, false
 	}
 	l.usage.Add(usage)
+	if l.in.Budget != nil {
+		l.chargeBudget() // before any call of this response starts
+	}
 	asst = msg
 	stopReason = sr
 	for _, b := range msg.Content {
@@ -1336,4 +1415,17 @@ func withTrailingText(msgs []llm.Message, frame string) []llm.Message {
 		return out
 	}
 	return append(out, llm.UserText(frame))
+}
+
+// chargeBudget reports to QueryInput.Budget what the run has spent since its
+// last report.
+func (l *loop) chargeBudget() { l.chargeBudgetTo(l.usage) }
+
+// chargeBudgetTo reports the spend up to total, a running figure that only
+// grows.
+func (l *loop) chargeBudgetTo(total llm.Usage) {
+	if d := usageDelta(l.charged, total); d != (llm.Usage{}) {
+		l.in.Budget.Spend(d)
+	}
+	l.charged = total
 }
