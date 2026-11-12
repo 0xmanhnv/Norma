@@ -48,6 +48,8 @@ func runMonitor(_ context.Context, input json.RawMessage, tc *ToolContext) (Resu
 		Description: in.Description,
 		Kind:        KindMonitor,
 		WorkingDir:  tc.WorkingDir,
+
+		EnvAllowlist: tc.ChildEnvAllowlist,
 	})
 	if err != nil {
 		return Errorf("Error: failed to start monitor: " + err.Error()), nil

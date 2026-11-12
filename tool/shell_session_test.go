@@ -20,7 +20,7 @@ func TestShellToolsJSONSessionID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Cleanup()
-	s, err := m.openSession("cat", "", nil, 24, 80, "hands-free", nil)
+	s, err := m.openSession("cat", "", nil, false, 24, 80, "hands-free", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestShellMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Cleanup()
-	s, err := m.openSession("printf 'START\\n'; sleep 0.3; printf 'TRIGGERWORD\\n'; sleep 5", "", nil, 24, 80, "monitor", nil)
+	s, err := m.openSession("printf 'START\\n'; sleep 0.3; printf 'TRIGGERWORD\\n'; sleep 5", "", nil, false, 24, 80, "monitor", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestShellSessionEcho(t *testing.T) {
 	}
 	defer m.Cleanup()
 
-	s, err := m.openSession("cat", "", nil, 24, 80, "hands-free", nil)
+	s, err := m.openSession("cat", "", nil, false, 24, 80, "hands-free", nil)
 	if err != nil {
 		t.Fatalf("openSession: %v", err)
 	}

@@ -136,6 +136,8 @@ func (l *loop) execOne(toolCtx context.Context, use llm.ContentBlock, emitProgre
 		TailOnly:       l.in.TaskOutputTailOnly,
 		Tasks:          l.in.Tasks,
 		Env:            l.in.BashEnv,
+
+		ChildEnvAllowlist: pol.ChildEnv == permission.ChildEnvAllowlist,
 	}
 	tc.RunDeferred = func(ctx context.Context, inner tool.CoreTool, innerInput json.RawMessage) (tool.Result, error) {
 		return l.runDeferred(ctx, pc, inner, innerInput, tc)

@@ -13,8 +13,8 @@ import (
 	"github.com/0xmanhnv/corvid/tool"
 )
 
-// A stdio MCP server is a child like any other: Deny refuses it, CleanEnv
-// scrubs the server's secrets but keeps the server's own configured env.
+// A stdio MCP server is a child like any other: Deny refuses it, and CleanEnv
+// or Allowlist scrub the server's secrets but keep its own configured env.
 func TestStdioChildProcess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix shell")
@@ -40,5 +40,19 @@ func TestStdioChildProcess(t *testing.T) {
 	env := string(b)
 	if strings.Contains(env, "STDIO_TEST_SECRET") || !strings.Contains(env, "MCP_OWN=1") || !strings.Contains(env, "HOME=/home/tool") {
 		t.Fatalf("stdio env:\n%s", env)
+	}
+
+	// With Allowlist the server gets only the allowlist and its own env,
+	// never the parent's secrets.
+	tool.SetChildProcess(&tool.ChildProcess{Allowlist: true})
+	out2 := filepath.Join(t.TempDir(), "env")
+	_, _ = NewStdioClient(ctx, "x", "sh", map[string]string{"MCP_OWN": "1"}, "-c", "env > "+out2)
+	b, err = os.ReadFile(out2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env = string(b)
+	if strings.Contains(env, "STDIO_TEST_SECRET") || !strings.Contains(env, "MCP_OWN=1") || !strings.Contains(env, "PATH=") {
+		t.Fatalf("allowlist stdio env:\n%s", env)
 	}
 }

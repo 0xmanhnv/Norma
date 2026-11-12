@@ -45,6 +45,12 @@ type Policy struct {
 	// out of time does not start ("refuse"), or starts with the cancelled
 	// context ("start", as before).
 	CallsAfterCancel CallsAfterCancel
+	// ChildEnv: processes this session's tools start (Bash, background tasks,
+	// shell sessions, ripgrep) begin from the environment allowlist plus the
+	// variables the host names ("allowlist"), or follow the process-wide
+	// tool.ChildProcess settings, which with none installed pass the whole
+	// environment ("process", as before). Default: allowlist.
+	ChildEnv ChildEnv
 }
 
 // The types of the Policy fields.
@@ -57,6 +63,7 @@ type (
 	RewrittenInput      string
 	CallPanics          string
 	CallsAfterCancel    string
+	ChildEnv            string
 )
 
 // The values of the Policy fields. The first of each pair is the strict one.
@@ -84,6 +91,9 @@ const (
 
 	CallsAfterCancelRefuse CallsAfterCancel = "refuse"
 	CallsAfterCancelStart  CallsAfterCancel = "start"
+
+	ChildEnvAllowlist ChildEnv = "allowlist"
+	ChildEnvProcess   ChildEnv = "process"
 )
 
 // policyItem describes one Policy field for Resolved, the presets and
@@ -122,6 +132,9 @@ func items() []policyItem {
 		{"CallsAfterCancel", "refuse", "start", "refuse",
 			func(p *Policy) *string { return (*string)(&p.CallsAfterCancel) },
 			"a call queued behind others can start after the run was cancelled"},
+		{"ChildEnv", "allowlist", "process", "allowlist",
+			func(p *Policy) *string { return (*string)(&p.ChildEnv) },
+			"child processes get the whole environment unless tool.ChildProcess narrows it"},
 	}
 }
 

@@ -9,20 +9,39 @@ import (
 
 // ChildProcess controls how every subprocess corvid starts is launched: Bash
 // (sync and managed), background tasks, interactive shell sessions, Grep's
-// ripgrep and stdio MCP servers. nil (the default) keeps the historical
-// behaviour: same user, full parent environment.
+// ripgrep and stdio MCP servers.
+//
+// The environment a child gets:
+//
+//   - with no settings installed, or settings with neither Allowlist nor
+//     CleanEnv: the whole parent environment, as before (secrets included);
+//   - with Allowlist: an allowlist of the parent environment, PATH, LANG,
+//     LANGUAGE, LC_*, TERM, TZ, TMPDIR, HOME, USER, LOGNAME and SHELL, plus
+//     the names in KeepEnv;
+//   - with CleanEnv: the same without HOME, USER, LOGNAME and SHELL, and HOME
+//     set to Home, else the child's working directory.
+//
+// Per-call variables (ToolContext.Env, Options.BashEnv, an MCP server's env)
+// are always added on top. A session whose permission.Policy.ChildEnv is
+// "allowlist" gets the allowlist for its own tools' children whatever is
+// installed here (see ToolContext.ChildEnvAllowlist).
 type ChildProcess struct {
 	// Credential runs children as this uid/gid with no supplementary groups.
 	// Unix only (the parent needs CAP_SETUID/CAP_SETGID); on Windows a set
 	// Credential makes every spawn fail instead of running unconfined.
 	Credential *Credential
-	// CleanEnv starts children from an allowlist of the parent environment
-	// (PATH, LANG, LANGUAGE, LC_*, TERM, TZ, TMPDIR + KeepEnv) instead of all of
-	// it; HOME is Home, else the child's working directory. Per-call extra
-	// variables (ToolContext.Env, MCP server env) are still added on top.
+	// Allowlist starts children from the allowlist instead of the whole
+	// parent environment.
+	Allowlist bool
+	// CleanEnv narrows the allowlist further: HOME, USER, LOGNAME and SHELL are
+	// not taken from the parent, and HOME is Home, else the child's working
+	// directory. It implies Allowlist.
 	CleanEnv bool
-	KeepEnv  []string
-	Home     string
+	// KeepEnv names further parent variables a child gets with Allowlist or
+	// CleanEnv.
+	KeepEnv []string
+	// Home is the child's HOME with CleanEnv, or with Allowlist when set.
+	Home string
 	// Deny, when set, refuses every spawn with this error (fail closed).
 	Deny error
 }
@@ -38,18 +57,42 @@ func SetChildProcess(p *ChildProcess) { childProc.Store(p) }
 // CurrentChildProcess returns the installed settings (nil = default).
 func CurrentChildProcess() *ChildProcess { return childProc.Load() }
 
-// ChildEnv is the environment a child started in dir gets: the base environment
-// (all of it, or the CleanEnv allowlist) with extra layered on top.
+// ChildEnv is the environment a child started in dir gets under the installed
+// settings: the base environment (all of it, or the allowlist) with extra
+// layered on top.
 func ChildEnv(dir string, extra []string) []string {
-	return append(baseEnv(dir), extra...)
+	return append(baseEnv(dir, false), extra...)
 }
 
-func baseEnv(dir string) []string {
+// childEnvAllow is the part of the parent environment every child gets.
+var childEnvAllow = []string{"PATH", "LANG", "LANGUAGE", "TERM", "TZ", "TMPDIR"}
+
+// childEnvAccount is the account part of the allowlist, left out with CleanEnv.
+var childEnvAccount = []string{"HOME", "USER", "LOGNAME", "SHELL"}
+
+// baseEnv is the parent part of a child's environment. allowlist forces the
+// allowlist (a session with Policy.ChildEnv "allowlist") whatever is installed.
+func baseEnv(dir string, allowlist bool) []string {
 	p := childProc.Load()
-	if p == nil || !p.CleanEnv {
+	if p == nil {
+		p = &ChildProcess{}
+	}
+	if !allowlist && !p.Allowlist && !p.CleanEnv {
 		return os.Environ()
 	}
-	keep := map[string]bool{"PATH": true, "LANG": true, "LANGUAGE": true, "TERM": true, "TZ": true, "TMPDIR": true}
+	keep := map[string]bool{}
+	for _, k := range childEnvAllow {
+		keep[k] = true
+	}
+	homeOverride := p.CleanEnv || p.Home != ""
+	if !p.CleanEnv {
+		for _, k := range childEnvAccount {
+			keep[k] = true
+		}
+	}
+	if homeOverride {
+		delete(keep, "HOME")
+	}
 	for _, k := range p.KeepEnv {
 		keep[k] = true
 	}
@@ -59,22 +102,31 @@ func baseEnv(dir string) []string {
 			out = append(out, kv)
 		}
 	}
-	if home := p.Home; home != "" {
-		out = append(out, "HOME="+home)
-	} else if dir != "" {
-		out = append(out, "HOME="+dir)
+	if homeOverride {
+		if p.Home != "" {
+			out = append(out, "HOME="+p.Home)
+		} else if dir != "" {
+			out = append(out, "HOME="+dir)
+		}
 	}
 	return out
 }
 
 // PrepareChild applies the installed settings to cmd before Start: it refuses
-// (Deny), sets cmd.Env from cmd.Dir + extra unless env is false, and sets the
-// credential. The pty and process-group flags already on cmd are kept.
+// (Deny), sets cmd.Env from cmd.Dir + extra unless env is false (the caller
+// has already built cmd.Env with ChildEnv), and sets the credential. The pty
+// and process-group flags already on cmd are kept. A caller that passes env
+// false must set cmd.Env itself: a nil cmd.Env inherits everything.
 func PrepareChild(cmd *exec.Cmd, extra []string, env bool) error {
+	return prepareChild(cmd, extra, env, false)
+}
+
+// prepareChild is PrepareChild; allowlist forces the environment allowlist.
+func prepareChild(cmd *exec.Cmd, extra []string, env, allowlist bool) error {
 	p := childProc.Load()
 	if p == nil {
 		if env {
-			cmd.Env = ChildEnv(cmd.Dir, extra)
+			cmd.Env = append(baseEnv(cmd.Dir, allowlist), extra...)
 		}
 		return nil
 	}
@@ -82,7 +134,7 @@ func PrepareChild(cmd *exec.Cmd, extra []string, env bool) error {
 		return p.Deny
 	}
 	if env {
-		cmd.Env = ChildEnv(cmd.Dir, extra)
+		cmd.Env = append(baseEnv(cmd.Dir, allowlist), extra...)
 	}
 	if p.Credential != nil {
 		return setCredential(cmd, *p.Credential)
