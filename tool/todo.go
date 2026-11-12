@@ -258,8 +258,8 @@ func (s *TodoStore) Tool() CoreTool {
 								"items": map[string]any{
 									"type": "object",
 									"properties": map[string]any{
-										"key":   map[string]any{"type": "string"},
-										"value": map[string]any{"type": "string"},
+										"key":   map[string]any{"type": "string", "description": "The name of the entry."},
+										"value": map[string]any{"type": "string", "description": "The value of the entry."},
 									},
 									"required":             []any{"key", "value"},
 									"additionalProperties": false,
