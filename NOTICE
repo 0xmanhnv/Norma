@@ -1,0 +1,17 @@
+Corvid
+Copyright 2026 Autumn-27
+Copyright 2026 Nguyen Manh and Corvid contributors
+
+This product is a modified version of norma (https://github.com/Autumn-27/norma),
+Copyright 2026 Autumn-27, licensed under the Apache License, Version 2.0.
+
+Files in this repository have been modified by the Corvid project since it forked
+from norma v0.4.4. The changes are recorded in the git history of
+https://github.com/0xmanhnv/corvid and summarised in CHANGELOG.md.
+
+The fold and foldadapter packages contain code ported from acp-kernel
+(https://github.com/ranxianglei/acp-kernel) and billion-context
+(https://github.com/ranxianglei/billion-context) by ranxianglei, under the MIT
+License with an attribution term from acp-kernel v0.0.98 on. See
+THIRD-PARTY-LICENSES.md. A program links that code only if it imports
+github.com/0xmanhnv/corvid/foldadapter or github.com/0xmanhnv/corvid/fold.

@@ -13,7 +13,11 @@ Corvid is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/no
 - **`main`** is the stable line: `dev` is merged into it when a release is cut.
 - **`mirror`** tracks upstream's `main` unchanged; upstream fixes are ported from it
   selectively. Do not open pull requests against it.
-- Releases are tagged `v0.4.4-p.N`.
+- Releases are tagged `vX.Y.Z` on `main`, starting at `v0.5.0` (the fork's own version
+  line). Before that, releases were `v0.4.4-p.N` pre-release tags. Only the maintainer
+  cuts a tag, and the tag is signed. The inherited tags whose `go.mod` declares an earlier
+  module path are retracted in `go.mod`; a new tag never goes on a commit whose `go.mod`
+  declares another path.
 - Keep the upstream copyright and `LICENSE` intact. Corvid is Apache-2.0; contributions
   are accepted under the same license.
 - Preserve third-party notices. Some paths are derived from other projects under their
