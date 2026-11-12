@@ -1,9 +1,26 @@
 # Changelog
 
-Notable changes to Corvid, newest first. Releases are tagged `v0.4.4-p.N`; the
+Notable changes to Corvid, newest first. Releases are tagged `vX.Y.Z` from `v0.5.0`
+on (earlier ones were `v0.4.4-p.N`); the
 entries under **Unreleased** are on `dev` and not yet in a tagged release.
 
 ## Unreleased
+
+### Security
+
+- **Go 1.26.11 and golang.org/x/net v0.62.0.** `govulncheck` found 19 reachable
+  vulnerabilities with Go 1.26.3 (crypto/tls, crypto/x509, encoding/asn1, net/http,
+  net/textproto, net/url) and golang.org/x/net v0.55.0 (used by WebFetch and
+  web_search). The `go` directive is now 1.26.11, and CI runs `govulncheck` on every
+  pull request.
+
+### Changed
+
+- **The fork's own version line.** `go.mod` retracts the inherited tags whose `go.mod`
+  declares an earlier module path (`v0.1.0` through `v0.4.4-p.4`, and `v0.4.4`). The
+  next release is `v0.5.0`. `NOTICE` records the modifications (Apache-2.0 §4(b)),
+  `SECURITY.md` says how to report a vulnerability, and `.github/CODEOWNERS` names the
+  maintainer.
 
 ### Fixed
 

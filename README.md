@@ -19,7 +19,7 @@ You point it at any model (via the **Anthropic** or **OpenAI** wire format — i
 
 Module path: `github.com/0xmanhnv/corvid` · Go 1.26+ (per [`go.mod`](go.mod); the loop streams through `iter`, added in Go 1.23).
 
-This is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma) (v0.4.4). Development happens on `dev`; `main` is the stable line, released as `v0.4.4-p.N` tags; the `mirror` branch tracks upstream unchanged. See [Acknowledgements](#acknowledgements).
+This is a maintained fork of [Autumn-27/norma](https://github.com/Autumn-27/norma) (v0.4.4). Development happens on `dev`; `main` is the stable line, released as `vX.Y.Z` tags from `v0.5.0` on (the fork's own version line); the `mirror` branch tracks upstream unchanged. See [Acknowledgements](#acknowledgements).
 
 Until November 2026 this fork was published as `github.com/0xmanhnv/norma`; the old URL redirects here, but Go imports must move to `github.com/0xmanhnv/corvid`.
 
@@ -63,7 +63,7 @@ flowchart LR
 go get github.com/0xmanhnv/corvid@v0.4.4-p.6
 ```
 
-Name the version. `@latest` does not work yet: Go picks the highest release tag for it, `v0.4.4`, and that tag's `go.mod` still declares the module path the project had before it was renamed, so the command fails with a module path mismatch. `v0.4.4-p.5` and later declare `github.com/0xmanhnv/corvid`; they are pre-release versions, which `@latest` skips while a release tag exists. This note goes away with the first release tagged under the current module path.
+Name the version. `@latest` does not work yet: Go picks the highest release tag for it, `v0.4.4`, and that tag's `go.mod` still declares the module path the project had before it was renamed, so the command fails with a module path mismatch. `v0.4.4-p.5` and later declare `github.com/0xmanhnv/corvid`; they are pre-release versions, which `@latest` skips while a release tag exists. The fork's own version line starts at `v0.5.0`: once that tag exists, `@latest` resolves to it, and the inherited tags whose `go.mod` declares an earlier path are retracted in [`go.mod`](go.mod), so `go list -m -versions` hides them. This note then goes away.
 
 ## Quick start
 

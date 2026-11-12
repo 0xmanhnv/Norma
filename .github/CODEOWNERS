@@ -1,0 +1,8 @@
+# The maintainer reviews every change; security-relevant paths are listed so the
+# rule survives if more owners are added.
+*                 @0xmanhnv
+/permission/      @0xmanhnv
+/harness/tools.go @0xmanhnv
+/tool/childproc*.go @0xmanhnv
+/go.mod           @0xmanhnv
+/.github/         @0xmanhnv
