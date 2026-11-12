@@ -166,7 +166,7 @@ func TestResumeSurvivesATornFinalLine(t *testing.T) {
 
 	var warnings []string
 	opts := Options{SystemPrompt: []string{"go"}, PermissionMode: permission.ModeBypass, Transcript: store,
-		OnWarn: func(m string) { warnings = append(warnings, m) },
+		OnWarn: func(m string) { warnings = appendNonPolicy(warnings, m) },
 		Deps:   harness.QueryDeps{CallModel: usageModel(llm.Usage{InputTokens: 1, OutputTokens: 1})}}
 	s := NewSession(opts)
 	defer s.Close()

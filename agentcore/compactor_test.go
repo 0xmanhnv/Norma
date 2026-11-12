@@ -25,7 +25,7 @@ func TestCompactorWinsOverCompaction(t *testing.T) {
 	s := NewSession(Options{
 		Compactor:  stubCompactor{},
 		Compaction: &compaction.Config{ContextWindow: 200000},
-		OnWarn:     func(m string) { warns = append(warns, m) },
+		OnWarn:     func(m string) { warns = appendNonPolicy(warns, m) },
 	})
 	if s.compactor == nil {
 		t.Fatal("session has no compactor")
@@ -50,7 +50,7 @@ func TestNoWarnWhenOnlyOneContextManager(t *testing.T) {
 	} {
 		var warns []string
 		o := opts
-		o.OnWarn = func(m string) { warns = append(warns, m) }
+		o.OnWarn = func(m string) { warns = appendNonPolicy(warns, m) }
 		NewSession(o)
 		if len(warns) != 0 {
 			t.Fatalf("%s: OnWarn called with %v, want no warnings", name, warns)

@@ -20,16 +20,95 @@ func ShellSessionTools() []CoreTool {
 	return []CoreTool{NewShellOpen(), NewShellSend(), NewShellRead(), NewShellClose(), NewShellList()}
 }
 
-func sessTool(name, desc string, schema map[string]any, readOnly bool, run func(context.Context, json.RawMessage, *ToolContext) (Result, error)) CoreTool {
+// sessTool builds one session tool. perms is its permission self-check; nil
+// allows (only for tools that start nothing and send nothing: read, list, and
+// close of a session the agent opened).
+func sessTool(name, desc string, schema map[string]any, readOnly bool, perms func(context.Context, json.RawMessage, permission.Context) permission.Decision, run func(context.Context, json.RawMessage, *ToolContext) (Result, error)) CoreTool {
+	if perms == nil {
+		perms = func(context.Context, json.RawMessage, permission.Context) permission.Decision {
+			return permission.Allowed()
+		}
+	}
 	return Build(Spec{
 		Name: name, Description: desc, Schema: schema,
-		ReadOnly:   func(json.RawMessage) bool { return readOnly },
-		Concurrent: func(json.RawMessage) bool { return false },
-		Permissions: func(context.Context, json.RawMessage, permission.Context) permission.Decision {
-			return permission.Allowed()
-		},
-		Run: run,
+		ReadOnly:    func(json.RawMessage) bool { return readOnly },
+		Concurrent:  func(json.RawMessage) bool { return false },
+		Permissions: perms,
+		Run:         run,
 	})
+}
+
+// shellLineDenied applies the Bash safety floor and the host's Bash deny rules
+// to a line run in, or typed into, an interactive session: a terminal runs
+// what Bash would, so it must not be a way around them.
+func shellLineDenied(line string, pc permission.Context) (permission.Decision, bool) {
+	if line == "" {
+		return permission.Decision{}, false
+	}
+	for _, re := range catastrophicBash {
+		if re.MatchString(line) {
+			return permission.Denied("denied: command appears irreversibly destructive and is blocked by the safety floor"), true
+		}
+	}
+	if permission.DeniedBy(pc.Disallowed, BashName, permission.Subject{Value: line, Kind: permission.SubjectShell}) {
+		return permission.Denied("denied: '" + BashName + "' deny rules forbid this command"), true
+	}
+	return permission.Decision{}, false
+}
+
+// shellOpenPermissions asks before a session starts a program: it is a shell.
+// With Policy.ShellSessions "allow" it allows itself, as before.
+func shellOpenPermissions(_ context.Context, input json.RawMessage, pc permission.Context) permission.Decision {
+	if pc.Policy.Resolved().ShellSessions == permission.ShellSessionsAllow {
+		return permission.Allowed()
+	}
+	var in struct {
+		Command string `json:"command"`
+	}
+	_ = json.Unmarshal(input, &in)
+	if d, denied := shellLineDenied(in.Command, pc); denied {
+		return d
+	}
+	return permission.AskUser("open interactive session: " + in.Command)
+}
+
+// shellSendPermissions asks before input is typed into a session: whatever is
+// typed runs with the session's rights. With Policy.ShellSessions "allow" it
+// allows itself, as before.
+func shellSendPermissions(_ context.Context, input json.RawMessage, pc permission.Context) permission.Decision {
+	if pc.Policy.Resolved().ShellSessions == permission.ShellSessionsAllow {
+		return permission.Allowed()
+	}
+	var in struct {
+		SessionID string   `json:"session_id"`
+		Text      string   `json:"text"`
+		Paste     string   `json:"paste"`
+		Keys      []string `json:"keys"`
+		Hex       []string `json:"hex"`
+	}
+	_ = json.Unmarshal(input, &in)
+	for _, line := range append([]string{in.Text}, splitLines(in.Paste)...) {
+		if d, denied := shellLineDenied(line, pc); denied {
+			return d
+		}
+	}
+	what := in.Text + in.Paste
+	if what == "" && (len(in.Keys) > 0 || len(in.Hex) > 0) {
+		what = fmt.Sprintf("keys %v %v", in.Keys, in.Hex)
+	}
+	return permission.AskUser("send to interactive session " + in.SessionID + ": " + what)
+}
+
+var lineBreak = regexp.MustCompile(`\r?\n|\r`)
+
+func splitLines(s string) []string {
+	var out []string
+	for _, l := range lineBreak.Split(s, -1) {
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func obj(props map[string]any, required ...string) map[string]any {
@@ -86,7 +165,7 @@ func NewShellOpen() CoreTool {
 		"quiet_ms":         intProp("Optional: milliseconds without output after which a command counts as finished (default 8000)."),
 		"startup_grace_ms": intProp("Optional: startup grace period in milliseconds during which silence does not count as finished (default 15000)."),
 	}, "command")
-	return sessTool(ShellOpenName, desc, schema, false, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellOpenName, desc, schema, false, shellOpenPermissions, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -177,7 +256,7 @@ func NewShellSend() CoreTool {
 		"quiet_ms":     intProp("Optional: milliseconds without output after which the command counts as finished (default 8000)."),
 		"timeout_ms":   intProp("Optional: hard limit on the wait, in milliseconds (default 120000)."),
 	}, "session_id")
-	return sessTool(ShellSendName, desc, schema, false, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellSendName, desc, schema, false, shellSendPermissions, func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -260,7 +339,7 @@ func NewShellRead() CoreTool {
 		"drain":        boolProp("stream: return all output since the last read, ignoring the limits."),
 	}, "session_id")
 	// per-session read cursor kept here (tool-side) so unspecified reads continue.
-	return sessTool(ShellReadName, desc, schema, true, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellReadName, desc, schema, true, nil, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -309,7 +388,7 @@ func NewShellRead() CoreTool {
 // NewShellClose closes a session.
 func NewShellClose() CoreTool {
 	schema := obj(map[string]any{"session_id": strProp("Session id.")}, "session_id")
-	return sessTool(ShellCloseName, "Closes an interactive session: kills its process and releases the PTY.", schema, false, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellCloseName, "Closes an interactive session: kills its process and releases the PTY.", schema, false, nil, func(_ context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil
@@ -333,7 +412,7 @@ func NewShellClose() CoreTool {
 
 // NewShellList lists sessions.
 func NewShellList() CoreTool {
-	return sessTool(ShellListName, "Lists all open interactive sessions and their state.", obj(map[string]any{}), true, func(_ context.Context, _ json.RawMessage, tc *ToolContext) (Result, error) {
+	return sessTool(ShellListName, "Lists all open interactive sessions and their state.", obj(map[string]any{}), true, nil, func(_ context.Context, _ json.RawMessage, tc *ToolContext) (Result, error) {
 		m, errR := sessManager(tc)
 		if errR != nil {
 			return *errR, nil

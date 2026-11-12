@@ -52,6 +52,11 @@ type QueryInput struct {
 	// longer fit the model's window, a spending limit is reached — with a
 	// reason of its own rather than a provider error several turns later.
 	StopCheck func(ctx context.Context, st RunState) *StopRequest
+	// Policy chooses between strict and compatible behaviour, item by item
+	// (see permission.Policy). Its zero value is the documented defaults.
+	// Tools see it in permission.Context, hooks through
+	// permission.PolicyFrom(ctx), and subagents inherit it.
+	Policy permission.Policy
 	// DeferredTools names tools whose schemas are withheld from the model's tool
 	// list (they stay in Tools and are invoked via ExecuteExtraTool). Empty = all
 	// tool schemas sent as usual.
@@ -316,7 +321,7 @@ func Query(ctx context.Context, in QueryInput, deps QueryDeps) iter.Seq2[Event, 
 		conc = 10
 	}
 	return func(yield func(Event, error) bool) {
-		l := &loop{ctx: ctx, in: in, deps: deps, yield: yield, sem: make(chan struct{}, conc)}
+		l := &loop{ctx: permission.WithPolicy(ctx, in.Policy), in: in, deps: deps, yield: yield, sem: make(chan struct{}, conc)}
 		l.messages = append([]llm.Message(nil), in.Messages...)
 		l.run()
 		if in.OnExit != nil {

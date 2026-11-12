@@ -86,7 +86,7 @@ disabled. Everything else is opt-in:
 | TodoWrite | `Options.Todos` | Stateful plan the host can observe via `Todos.List()`. `tool.NewPersistentTodoStore(tool.TodoFile(path))` (or any `TodoPersister`) keeps it across a restart. Each todo may carry a free-form `Meta` map of strings the harness never interprets. |
 | AskUserQuestion | `Options.AskUser` | Pause a long task to ask a structured multiple-choice question. |
 | TaskOutput / TaskStop / TaskList / Monitor | on by default; `Options.DisableBackgroundTasks` removes them | See the [jobs guide](jobs.md). |
-| shell_open / shell_send / shell_read / shell_list / shell_close | add `tool.ShellSessionTools()` to `Options.Tools` | Interactive PTY sessions for programs that expect a terminal, such as a REPL. They need background tasks on; `AGENT_CORE_DISABLE_INTERACTIVE_SHELL` turns them off. |
+| shell_open / shell_send / shell_read / shell_list / shell_close | add `tool.ShellSessionTools()` to `Options.Tools` | Interactive PTY sessions for programs that expect a terminal, such as a REPL. They need background tasks on; `AGENT_CORE_DISABLE_INTERACTIVE_SHELL` turns them off. shell_open and shell_send ask for approval, and the Bash safety floor and `Bash(...)` deny rules apply to the command they start or the text they type (`permission.Policy.ShellSessions` "ask"; "allow" is the behaviour before). |
 
 Each built-in tool's name is exported as a constant: `tool.BashName`,
 `tool.MonitorName`, `tool.ShellSendName`, `tool.WebSearchName`, `tool.SleepName` and
@@ -156,7 +156,13 @@ To keep a large tool catalog from eating context, name tools in
 `Options.DeferredTools`: their schemas are withheld from the model's tool list, but
 they stay callable. The model discovers them on demand via `SearchExtraTools` and
 invokes them through `ExecuteExtraTool` (both auto-added when `DeferredTools` is
-non-empty). An `UnlockSet` (`Options.UnlockSet`, or one the session seeds with every
+non-empty). `ExecuteExtraTool` runs nothing itself: it hands the deferred tool to the
+loop (`ToolContext.RunDeferred`), which runs it through the schema check and the
+permission pipeline under the deferred tool's own name, so `Disallowed:
+[]string{"Bash"}` holds for a deferred Bash too (`permission.Policy.DeferredPermissions`
+"own_name", the default). Hooks see the call as `ExecuteExtraTool`, and also under the
+deferred tool's name with `DeferredHooks` "own_name". A host that wraps its tools keeps
+this path: the wrapper passes the `ToolContext` on. An `UnlockSet` (`Options.UnlockSet`, or one the session seeds with every
 deferred tool) gates which deferred tools are currently callable. Hosts that reveal
 tools per skill pass their own set and `Add` to it from `skill.Registry.OnInvoke`.
 Only the names reach the model, through `tool.RenderDeferredToolsBlock` placed in the

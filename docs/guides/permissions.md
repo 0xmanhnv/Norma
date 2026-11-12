@@ -93,3 +93,31 @@ changes the active mode mid-loop through `QueryInput.PermissionModeFunc`, which 
 harness reads fresh for each call. A subagent runs in the stricter of its own mode and
 its parent's, and inherits the parent's rules (see the
 [subagents guide](subagents.md)).
+
+## Strict and compatible: permission.Policy
+
+Each check that corvid has tightened is a setting of one `permission.Policy`
+(`agentcore.Options.Policy`, `harness.QueryInput.Policy`), with two values: the strict
+one and the compatible one, which is how corvid behaved before. Every field's zero value
+is its default, chosen so that a host which upgrades corvid without changing its code
+keeps working. Subagents inherit the policy.
+
+| Setting | Compatible value | Strict value | Default | What the strict value protects against |
+|---|---|---|---|---|
+| `DeferredPermissions` | `wrapper` | `own_name` | strict | A deferred tool called through `ExecuteExtraTool` skipping deny rules, its own permission check and the approval callback |
+| `DeferredHooks` | `wrapper` | `own_name` | compatible | Hooks keyed on a deferred tool's name never seeing it (they see `ExecuteExtraTool` only) |
+| `ShellSessions` | `allow` | `ask` | strict | `shell_open` and `shell_send` running a command or typing text with no approval, past the Bash safety floor and `Bash(...)` deny rules |
+| `MemoryWrites` | `allow` | `ask` | strict | A prompt injection persisting through `RecordMemory` into every later session |
+| `HookDecisions` | `ignore_unknown` | `block_unknown` | strict | A misspelt or unknown hook decision (`"Block"`, `"deny"`) letting the action through |
+| `RewrittenInput` | `trust` | `recheck` | strict | A hook (or a permission decision) rewriting allowed input into something invalid or denied |
+| `CallPanics` | `tool_only` | `contain` | strict | A panic in a permission check, hook or result rewriter ending the process |
+| `CallsAfterCancel` | `start` | `refuse` | strict | A call queued behind others starting after the run was cancelled or ran out of time |
+
+`permission.StrictPolicy()` sets every field to its strict value and
+`permission.CompatiblePolicy()` to its compatible one. `agentcore.NewSession` reports
+each field that is not at its strict value once, through `Options.OnWarn`, naming the
+field and the value to set. An `Embedded` session always runs `StrictPolicy()`.
+
+To run everything strict, set `Options.Policy: permission.StrictPolicy()`. To keep one
+check as it was while the rest is strict, start from `StrictPolicy()` and set that
+field to its compatible value.

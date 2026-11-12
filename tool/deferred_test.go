@@ -81,33 +81,73 @@ func TestSearchExtraTools(t *testing.T) {
 	}
 }
 
+// delegateAndRun calls ExecuteExtraTool with a ToolContext whose RunDeferred
+// does what the agent loop does, minus the permission check and hooks:
+// validate the deferred tool's input and run it.
+func delegateAndRun(t *testing.T, exec CoreTool, in string) Result {
+	t.Helper()
+	tc := &ToolContext{RunDeferred: func(ctx context.Context, inner CoreTool, params json.RawMessage) (Result, error) {
+		if err := ValidateInput(inner.InputSchema(), params); err != nil {
+			return Errorf("Error: invalid tool input: " + err.Error()), nil
+		}
+		return inner.Call(ctx, params, nil)
+	}}
+	r, err := exec.Call(context.Background(), json.RawMessage(in), tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 func TestExecuteExtraTool(t *testing.T) {
 	reg := NewRegistry(echoTool())
 	unlock := NewUnlockSet("echo")
 	exec := NewExecuteExtraTool(reg, unlock)
 
-	// unlocked → runs
-	r, _ := exec.Call(context.Background(), json.RawMessage(`{"tool_name":"echo","params":{"msg":"hi"}}`), nil)
+	// unlocked → resolves to echo and runs
+	r := delegateAndRun(t, exec, `{"tool_name":"echo","params":{"msg":"hi"}}`)
 	if r.IsError || r.Content[0].Text != "echo:hi" {
 		t.Fatalf("expected echo:hi, got %+v", r)
 	}
 
 	// locked → rejected
 	locked := NewExecuteExtraTool(reg, NewUnlockSet())
-	r, _ = locked.Call(context.Background(), json.RawMessage(`{"tool_name":"echo","params":{"msg":"hi"}}`), nil)
+	r = delegateAndRun(t, locked, `{"tool_name":"echo","params":{"msg":"hi"}}`)
 	if !r.IsError || !strings.Contains(r.Content[0].Text, "not unlocked") {
 		t.Fatalf("locked tool should be rejected, got %+v", r)
 	}
 
 	// unknown tool
-	r, _ = exec.Call(context.Background(), json.RawMessage(`{"tool_name":"nope","params":{}}`), nil)
-	if !r.IsError || !strings.Contains(r.Content[0].Text, "unknown tool") {
+	r = delegateAndRun(t, exec, `{"tool_name":"nope","params":{}}`)
+	if !r.IsError || !strings.Contains(r.Content[0].Text, "unknown tool") || r.ErrorCode != CodeUnknownTool {
 		t.Fatalf("unknown tool should error, got %+v", r)
 	}
 
 	// invalid params (missing required msg) → schema validation error
-	r, _ = exec.Call(context.Background(), json.RawMessage(`{"tool_name":"echo","params":{}}`), nil)
-	if !r.IsError || !strings.Contains(r.Content[0].Text, "invalid params") {
+	r = delegateAndRun(t, exec, `{"tool_name":"echo","params":{}}`)
+	if !r.IsError || !strings.Contains(r.Content[0].Text, "invalid tool input") {
 		t.Fatalf("invalid params should error, got %+v", r)
+	}
+}
+
+// Called with no agent loop behind it (no ToolContext.RunDeferred),
+// ExecuteExtraTool refuses: there must be no path that runs a deferred tool
+// with no permission check.
+func TestExecuteExtraToolCallFailsClosed(t *testing.T) {
+	ran := false
+	reg := NewRegistry(Build(Spec{
+		Name:   "sideeffect",
+		Schema: map[string]any{"type": "object"},
+		Run: func(context.Context, json.RawMessage, *ToolContext) (Result, error) {
+			ran = true
+			return Text("ran"), nil
+		},
+	}))
+	exec := NewExecuteExtraTool(reg, nil)
+	for _, tc := range []*ToolContext{nil, {}} {
+		r, err := exec.Call(context.Background(), json.RawMessage(`{"tool_name":"sideeffect","params":{}}`), tc)
+		if err != nil || !r.IsError || ran || r.ErrorCode != CodePermissionDenied {
+			t.Fatalf("Call without the loop must refuse without running the tool: ran=%v r=%+v err=%v", ran, r, err)
+		}
 	}
 }

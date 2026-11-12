@@ -41,10 +41,7 @@ func TestExecuteExtraToolDirectTool(t *testing.T) {
 	exec := NewExecuteExtraToolFor(reg, NewUnlockSet("echo"), []string{"echo", "gated"})
 	reg.Add(exec)
 	reg.Add(NewSearchExtraTools(reg, []string{"echo", "gated"}))
-	call := func(in string) Result {
-		r, _ := exec.Call(context.Background(), json.RawMessage(in), nil)
-		return r
-	}
+	call := func(in string) Result { return delegateAndRun(t, exec, in) }
 	if r := call(`{"tool_name":"add_note","params":{}}`); !r.IsError || !strings.Contains(r.Content[0].Text, "call add_note directly") {
 		t.Fatalf("direct tool: %+v", r)
 	}

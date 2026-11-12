@@ -37,7 +37,10 @@ opts.Memory = &agentcore.MemoryOptions{
 ```
 
 This adds two tools — **RecallMemory** and **RecordMemory** — so the agent can look up
-memories relevant to the task and write new ones. With `AutoInject`, `Session.Prompt`
+memories relevant to the task and write new ones. RecordMemory asks for approval like
+any other write, because what it saves is shown to every later session; a host that
+trusts it adds `"RecordMemory"` to `AllowedTools`, or sets
+`permission.Policy.MemoryWrites` to "allow" (the behaviour before). With `AutoInject`, `Session.Prompt`
 picks the memories most relevant to each prompt (`Store.Relevant`) and appends them,
 rendered by `memory.RenderForInjection`, to the user's message. The index can also be
 surfaced as a system-prompt segment so the model knows what it has stored even before

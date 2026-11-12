@@ -241,7 +241,11 @@ flowchart TD
     Eval -->|not allow| Denied["synthetic error result<br/>CodePermissionDenied"]
     Eval -->|allow| PreHook["PreToolUse hook"]
     PreHook -->|block| Blocked[error: blocked by hook]
-    PreHook -->|ok / rewrite| Run["tool.Call"]
+    PreHook -->|rewrite| Recheck["validate + evaluate again<br/>(RewrittenInput recheck)"]
+    Recheck -->|allow| Run
+    Recheck -->|not allow| Denied
+    PreHook -->|ok| Run["tool.Call"]
+    Run -.->|ExecuteExtraTool| Deferred["ToolContext.RunDeferred:<br/>the deferred tool, checked<br/>under its own name"]
     Run --> Rewrite["RewriteToolResult<br/>(if the host set one)"]
     Rewrite --> Cap["cap / spill oversized output"]
     Cap --> Post["OnToolResult · PostToolUse hook"]
@@ -252,6 +256,22 @@ Two details make this robust: input is **coerced** before validation (common
 mistypings like a number sent as a string are repaired, `tool.CoerceInput`), and
 **every** tool's output — built-in, MCP, custom, or host — passes through one output
 cap so no single tool can overflow the context window.
+
+How strictly it fails closed is set by `permission.Policy` (`Options.Policy`; see the
+[permissions guide](guides/permissions.md#strict-and-compatible-permissionpolicy)).
+With the strict values:
+
+- No tool runs without a permission decision. `ExecuteExtraTool` runs nothing itself:
+  it hands the deferred tool to the loop (`ToolContext.RunDeferred`, which a tool
+  wrapper passes on), and the loop checks it under its own name, so a deny rule keyed
+  on that name holds whichever path the model takes (`DeferredPermissions`); hooks
+  see it under its own name too (`DeferredHooks`). Called with no loop behind it,
+  `ExecuteExtraTool` refuses.
+- Input a `PreToolUse` hook rewrites is validated and evaluated again
+  (`RewrittenInput`).
+- A call that reaches the choke point after the run was cancelled does not start
+  (`CallsAfterCancel`), and a panic in a permission check, hook or rewriter fails that
+  call, not the process (`CallPanics`).
 
 ### The four-stage pipeline
 
@@ -437,7 +457,7 @@ spawns workers itself; the programmatic `RunParallel` fans tasks out concurrentl
   the harness reads the mode through `QueryInput.PermissionModeFunc` so the change
   takes effect mid-loop.
 - **Hooks** (`hook/hook.go`) are Go callbacks at eight points: `PreToolUse` (may block
-  the call or rewrite its input), `PostToolUse` / `PostToolUseFailure`, `Stop` (may end
+  the call or rewrite its input; a decision other than `"block"`, `"approve"` or empty also blocks, unless `permission.Policy.HookDecisions` is "ignore_unknown"), `PostToolUse` / `PostToolUseFailure`, `Stop` (may end
   the run or force another turn), `UserPromptSubmit` (may add context to the prompt),
   `SessionStart`, `SessionEnd` and `SubagentStart`. A `hook.Registry` goes in
   `Options.Hooks`. The loop fires the tool and Stop hooks, `Session.Prompt` fires

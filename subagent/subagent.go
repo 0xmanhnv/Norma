@@ -226,6 +226,7 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		in.OnToolResult = p.OnToolResult
 		in.RewriteToolResult = p.RewriteToolResult
 		in.Settlement = p.Settlement
+		in.Policy = p.Policy
 		if p.AgentID != "" {
 			in.AgentID = p.AgentID + "/" + agentType
 		}
