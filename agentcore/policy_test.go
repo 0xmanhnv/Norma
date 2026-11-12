@@ -46,9 +46,22 @@ func TestPolicyWarnings(t *testing.T) {
 			t.Errorf("warning does not name the strict option: %q", w)
 		}
 	}
-	// The defaults: only the items whose default is the compatible value.
+	// The defaults: exactly the fields whose default is not the strict value.
+	resolved := reflect.ValueOf(permission.Policy{}.Resolved())
+	strict := reflect.ValueOf(permission.StrictPolicy())
+	var want []string
+	for i := 0; i < resolved.NumField(); i++ {
+		if resolved.Field(i).String() != strict.Field(i).String() {
+			want = append(want, resolved.Type().Field(i).Name)
+		}
+	}
 	def := count(permission.Policy{})
-	if len(def) != 1 || !strings.Contains(def[0], "DeferredHooks") {
-		t.Fatalf("default policy warnings = %v, want only DeferredHooks", def)
+	if len(def) != len(want) {
+		t.Fatalf("default policy warnings = %v, want one each for %v", def, want)
+	}
+	for i, f := range want {
+		if !strings.Contains(def[i], "Policy."+f+" ") {
+			t.Fatalf("warning %d = %q, want it about %s", i, def[i], f)
+		}
 	}
 }

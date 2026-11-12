@@ -216,10 +216,11 @@ func NewShellOpen() CoreTool {
 		}
 		workDir := ""
 		var env []string
+		allowlist := false
 		if tc != nil {
-			workDir, env = tc.WorkingDir, tc.Env
+			workDir, env, allowlist = tc.WorkingDir, tc.Env, tc.ChildEnvAllowlist
 		}
-		s, err := m.openSession(a.Command, workDir, env, a.Rows, a.Cols, mode, pr)
+		s, err := m.openSession(a.Command, workDir, env, allowlist, a.Rows, a.Cols, mode, pr)
 		if err != nil {
 			return Errorf("could not open session: " + err.Error()), nil
 		}

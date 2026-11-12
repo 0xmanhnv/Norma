@@ -48,12 +48,72 @@ func TestChildProcessCleanEnv(t *testing.T) {
 	}
 }
 
-// Without settings nothing changes: the full parent environment is inherited.
-func TestChildProcessDefaultInherits(t *testing.T) {
-	t.Setenv("CHILDPROC_TEST_INHERIT", "yes")
+// Without settings a child inherits the whole environment, as before.
+// Allowlist (process-wide) and a session's ChildEnv "allowlist" give it the
+// allowlist plus what the host names, never an unnamed secret.
+func TestChildProcessEnvModes(t *testing.T) {
+	t.Setenv("CHILDPROC_TEST_API_KEY", "sk-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+	t.Setenv("HOME", "/home/someone")
 	SetChildProcess(nil)
-	if got := envValue(withEnvIn("/x", nil), "CHILDPROC_TEST_INHERIT"); got != "yes" {
-		t.Fatalf("default must inherit the parent env, got %q", got)
+	if v := envValue(withEnvIn("/x", nil), "ANTHROPIC_API_KEY"); v != "sk-ant-secret" {
+		t.Fatalf("with no settings a child must inherit the environment as before, got %q", v)
+	}
+	check := func(where string, env []string) {
+		t.Helper()
+		for _, k := range []string{"CHILDPROC_TEST_API_KEY", "ANTHROPIC_API_KEY"} {
+			if v := envValue(env, k); v != "" {
+				t.Fatalf("%s: %s leaked into the child env: %q", where, k, v)
+			}
+		}
+		if envValue(env, "PATH") == "" || envValue(env, "HOME") != "/home/someone" || envValue(env, "NAMED") != "1" {
+			t.Fatalf("%s: child env lost PATH, HOME or a named variable: %v", where, env)
+		}
+	}
+	check("session allowlist", withEnvFor("/x", []string{"NAMED=1"}, true))
+
+	withChild(t, &ChildProcess{Allowlist: true})
+	check("process Allowlist", withEnvIn("/x", []string{"NAMED=1"}))
+
+	withChild(t, &ChildProcess{Allowlist: true, KeepEnv: []string{"CHILDPROC_TEST_API_KEY"}})
+	if v := envValue(withEnvIn("/x", nil), "CHILDPROC_TEST_API_KEY"); v != "sk-secret" {
+		t.Fatalf("a variable named in KeepEnv must pass, got %q", v)
+	}
+	if v := envValue(withEnvIn("/x", nil), "ANTHROPIC_API_KEY"); v != "" {
+		t.Fatalf("an unnamed secret passed with KeepEnv set: %q", v)
+	}
+}
+
+// A session with ChildEnv "allowlist" (ToolContext.ChildEnvAllowlist) gets the
+// allowlist on every spawn path with no settings installed: a sync and a
+// managed Bash, and the ripgrep spawn.
+func TestChildEnvAllowlistPerSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell")
+	}
+	t.Setenv("CHILDPROC_TEST_TOKEN", "tok-secret")
+	SetChildProcess(nil)
+	raw, _ := json.Marshal(map[string]any{"command": "echo token=[$CHILDPROC_TEST_TOKEN]"})
+	res, _ := NewBash().Call(context.Background(), raw, &ToolContext{ChildEnvAllowlist: true})
+	if out := res.Flatten(); !strings.Contains(out, "token=[]") {
+		t.Fatalf("sync bash inherited a secret: %q", out)
+	}
+	res, _ = NewBash().Call(context.Background(), raw, &ToolContext{})
+	if out := res.Flatten(); !strings.Contains(out, "token=[tok-secret]") {
+		t.Fatalf("without the session setting, sync bash must inherit as before: %q", out)
+	}
+	m, err := NewManager("childproc-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Cleanup()
+	_, finished, out, err := m.RunForeground(context.Background(), SpawnSpec{Command: "echo token=[$CHILDPROC_TEST_TOKEN]", EnvAllowlist: true}, 10*time.Second)
+	if err != nil || !finished || !strings.Contains(out, "token=[]") {
+		t.Fatalf("managed bash: finished=%v err=%v out=%q", finished, err, out)
+	}
+	cmd := exec.Command("true")
+	if err := prepareChild(cmd, nil, true, true); err != nil || envValue(cmd.Env, "CHILDPROC_TEST_TOKEN") != "" || len(cmd.Env) == 0 {
+		t.Fatalf("prepareChild with allowlist: err=%v env=%v", err, cmd.Env)
 	}
 }
 
@@ -107,7 +167,7 @@ func TestChildProcessDeny(t *testing.T) {
 		t.Fatalf("Spawn must be refused, got %v", err)
 	}
 	if ptySupported() {
-		if _, err := m.openSession("cat", "", nil, 24, 80, "hands-free", nil); !errors.Is(err, deny) {
+		if _, err := m.openSession("cat", "", nil, false, 24, 80, "hands-free", nil); !errors.Is(err, deny) {
 			t.Fatalf("shell session must be refused, got %v", err)
 		}
 	}

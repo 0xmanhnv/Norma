@@ -14,7 +14,7 @@ transport to an external MCP server process, lists its tools, and adapts each in
 `CoreTool`. This is the standard way to pull in third-party MCP servers:
 
 ```go
-c, err := mcp.NewStdioClient(ctx, "files", "my-mcp-server", nil /* extra env */, "--stdio")
+c, err := mcp.NewStdioClient(ctx, "files", "my-mcp-server", nil /* the env it needs beyond the allowlist */, "--stdio")
 if err != nil {
     return err
 }

@@ -63,6 +63,11 @@ type ToolContext struct {
 	// when it is nil, so a call that did not come through the loop runs
 	// nothing unchecked.
 	RunDeferred func(ctx context.Context, t CoreTool, input json.RawMessage) (Result, error)
+	// ChildEnvAllowlist makes the processes this call starts (Bash,
+	// background tasks, shell sessions, ripgrep) begin from the environment
+	// allowlist whatever the installed ChildProcess settings. The loop sets
+	// it from permission.Policy.ChildEnv.
+	ChildEnvAllowlist bool
 }
 
 func (tc *ToolContext) progress(msg string) {

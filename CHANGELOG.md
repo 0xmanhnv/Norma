@@ -33,6 +33,15 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
   enumerates every tool a session can hold and fails on one that changes something
   and allows itself without a reviewed reason, under the strict and the compatible
   preset.
+- **The child environment is a policy setting.** `permission.Policy.ChildEnv`
+  `allowlist` makes the processes a session's tools start (Bash, background tasks,
+  shell sessions, ripgrep) begin from an allowlist (`PATH`, `LANG`, `LANGUAGE`, `LC_*`,
+  `TERM`, `TZ`, `TMPDIR`, `HOME`, `USER`, `LOGNAME`, `SHELL`) plus what the host names
+  (`ChildProcess.KeepEnv`, `BashEnv`, `ToolContext.Env`), so a provider key in the host's
+  environment does not reach a command the model runs. `tool.ChildProcess.Allowlist` is
+  the same choice process-wide, which also covers stdio MCP servers. The default is
+  `allowlist`; `process` keeps the behaviour before (with no `ChildProcess` settings
+  installed, a child gets the whole environment).
 
 ### Behaviour changes
 
@@ -49,6 +58,11 @@ With the default policy, compared with before:
 - A `hook.Registry` decision other than `"block"`, `"approve"` or empty blocks.
 - Input a `PreToolUse` hook rewrites is validated against the tool's schema and
   evaluated by the permission pipeline again.
+- Bash, background tasks, shell sessions and ripgrep started by a session's tools get
+  the environment allowlist plus the variables the host names, not the whole
+  environment (`ChildEnv` `allowlist`). A host whose commands need a variable from its
+  own environment names it in `Options.BashEnv` or `tool.ChildProcess.KeepEnv`, or sets
+  `ChildEnv` to `process`. MCP servers are unchanged (process-wide settings only).
 - A panic in a permission check, a hook or a result rewriter fails that call instead
   of ending the process; a call queued behind others does not start once the run is
   cancelled or out of time.

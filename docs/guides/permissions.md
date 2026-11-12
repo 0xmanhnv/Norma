@@ -112,6 +112,7 @@ keeps working. Subagents inherit the policy.
 | `RewrittenInput` | `trust` | `recheck` | strict | A hook (or a permission decision) rewriting allowed input into something invalid or denied |
 | `CallPanics` | `tool_only` | `contain` | strict | A panic in a permission check, hook or result rewriter ending the process |
 | `CallsAfterCancel` | `start` | `refuse` | strict | A call queued behind others starting after the run was cancelled or ran out of time |
+| `ChildEnv` | `process` | `allowlist` | strict | A command the model runs reading the host's provider keys and other secrets from its environment (see [Child processes](#child-processes)) |
 
 `permission.StrictPolicy()` sets every field to its strict value and
 `permission.CompatiblePolicy()` to its compatible one. `agentcore.NewSession` reports
@@ -121,3 +122,30 @@ field and the value to set. An `Embedded` session always runs `StrictPolicy()`.
 To run everything strict, set `Options.Policy: permission.StrictPolicy()`. To keep one
 check as it was while the rest is strict, start from `StrictPolicy()` and set that
 field to its compatible value.
+## Child processes
+
+Every subprocess corvid starts (Bash, background tasks, interactive shell sessions,
+Grep's ripgrep, stdio MCP servers) is launched through `tool.PrepareChild` and the
+process-wide `tool.ChildProcess` settings (`tool.SetChildProcess`).
+
+What a child's environment holds:
+
+- For the tools of a session whose `permission.Policy.ChildEnv` is `allowlist` (the
+  default), or with `ChildProcess.Allowlist`: an allowlist, `PATH`, `LANG`, `LANGUAGE`,
+  `LC_*`, `TERM`, `TZ`, `TMPDIR`, `HOME`, `USER`, `LOGNAME` and `SHELL`, plus the parent
+  variables named in `ChildProcess.KeepEnv`.
+- Otherwise (`ChildEnv` `process` with no settings installed, or settings with neither
+  `Allowlist` nor `CleanEnv`, and for stdio MCP servers without them): the whole
+  environment of the host process, provider API keys and other secrets included, as
+  before.
+- With `ChildProcess.CleanEnv`, in either case: the allowlist without `HOME`, `USER`, `LOGNAME` and
+  `SHELL`; `HOME` is `ChildProcess.Home` or the child's working directory.
+
+Per-call variables are always added on top: `Options.BashEnv`, `ToolContext.Env`, and
+the `env` map of `mcp.NewStdioClient`. A secret reaches a child under the allowlist
+only when the host names it there or in `KeepEnv`.
+
+`permission.Policy.ChildEnv` is per session; it covers the processes the session's
+tools start. MCP servers are started by the host before any session, so they follow
+the process-wide settings only. `ChildProcess.Deny` refuses every spawn, and
+`ChildProcess.Credential` runs children as another uid/gid.

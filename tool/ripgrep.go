@@ -157,7 +157,7 @@ func runWithRipgrep(rg string, r ripgrepReq, tc *ToolContext) (Result, bool) {
 
 	cmd := exec.Command(rg, args...)
 	cmd.Dir = dir
-	if PrepareChild(cmd, nil, CurrentChildProcess() != nil) != nil {
+	if prepareChild(cmd, nil, true, tc != nil && tc.ChildEnvAllowlist) != nil {
 		return Result{}, false // refused → Go fallback (in-process, no child)
 	}
 	out, err := cmd.Output()

@@ -300,7 +300,7 @@ func (m *Manager) session(id string) (*ptySession, bool) {
 }
 
 // openSession starts an interactive program in a fresh PTY and begins its read loop.
-func (m *Manager) openSession(command, workDir string, env []string, rows, cols int, mode string, prompt *regexp.Regexp) (*ptySession, error) {
+func (m *Manager) openSession(command, workDir string, env []string, allowlist bool, rows, cols int, mode string, prompt *regexp.Regexp) (*ptySession, error) {
 	if !ptySupported() {
 		return nil, fmt.Errorf("interactive shell (PTY) is not supported on this platform")
 	}
@@ -314,7 +314,7 @@ func (m *Manager) openSession(command, workDir string, env []string, rows, cols 
 	shell, flags := shellCmd()
 	cmd := exec.CommandContext(m.rootCtx, shell, append(flags, command)...)
 	cmd.Dir = workDir
-	cmd.Env = withEnvIn(workDir, env)
+	cmd.Env = withEnvFor(workDir, env, allowlist)
 	if err := applyChild(cmd); err != nil {
 		return nil, err
 	}

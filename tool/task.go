@@ -152,6 +152,9 @@ type SpawnSpec struct {
 	// Env holds extra "KEY=VALUE" entries layered onto the process environment for
 	// this command (see ToolContext.Env). Empty still applies nonInteractiveEnv.
 	Env []string
+	// EnvAllowlist starts the command from the environment allowlist whatever
+	// the installed ChildProcess settings (ToolContext.ChildEnvAllowlist).
+	EnvAllowlist bool
 }
 
 // nonInteractiveEnv are defaults every spawned shell gets, whether or not the
@@ -182,9 +185,12 @@ var nonInteractiveEnv = []string{
 // The result is never nil — the defaults always apply.
 func withEnv(extra []string) []string { return withEnvIn("", extra) }
 
+// withEnvIn is withEnvFor under the installed settings.
+func withEnvIn(dir string, extra []string) []string { return withEnvFor(dir, extra, false) }
+
 // withEnvIn is withEnv for a child started in dir (the CleanEnv HOME fallback,
 // see ChildProcess).
-func withEnvIn(dir string, extra []string) []string {
+func withEnvFor(dir string, extra []string, allowlist bool) []string {
 	extraKeys := make(map[string]bool, len(extra))
 	for _, kv := range extra {
 		if k := envKey(kv); k != "" {
@@ -200,7 +206,7 @@ func withEnvIn(dir string, extra []string) []string {
 			drop[k] = true
 		}
 	}
-	base := baseEnv(dir)
+	base := baseEnv(dir, allowlist)
 	out := make([]string, 0, len(base)+len(nonInteractiveEnv)+len(extra))
 	for _, kv := range base {
 		if k := envKey(kv); k != "" && drop[k] {
@@ -369,7 +375,7 @@ func (m *Manager) Spawn(spec SpawnSpec) (*Task, error) {
 	shell, flags := shellCmd()
 	cmd := exec.CommandContext(m.rootCtx, shell, append(flags, spec.Command)...)
 	cmd.Dir = spec.WorkingDir
-	cmd.Env = withEnvIn(spec.WorkingDir, spec.Env)
+	cmd.Env = withEnvFor(spec.WorkingDir, spec.Env, spec.EnvAllowlist)
 	cmd.Stdout = f
 	cmd.Stderr = f
 	setDetached(cmd)
