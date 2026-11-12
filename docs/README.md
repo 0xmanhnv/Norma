@@ -56,6 +56,7 @@ One page per major subsystem. Deep but accurate; each cites the code.
 | [Skills](guides/skills.md) | `skill` | Named instruction packages that survive compaction. |
 | [Memory](guides/memory.md) | `memory` | File-backed long-term memory and auto-injection. |
 | [Background jobs](guides/jobs.md) | `tool` (Manager) | Out-of-band tasks, their notifications, and the output and memory caps. |
+| [Embedding](guides/embedding.md) | `agentcore` | Linking corvid into an unattended service: the embedded profile, what is linked, the extension points. |
 | [fold upstream sync](guides/fold-upstream-sync.md) | `fold`, `foldadapter` | Where the `fold` port comes from, and every upstream change since: ported, deferred or skipped. |
 
 ## Conventions in these docs

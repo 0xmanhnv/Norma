@@ -212,6 +212,13 @@ With the default policy, compared with before:
   their parent's budget (`ParentRun.Budget`), or `subagent.Config.Budget` when they
   have no parent, so fan-out cannot overrun it. `RunState.SubagentUsage` shows a
   `StopCheck` what finished subagents spent.
+- **An embedded profile.** `Options.Embedded` is for a host that links corvid into an
+  unattended service: nil `Tools` means no tools (the built-in file, shell and search
+  tools are not added), no background-task tools, `bypassPermissions` never in effect
+  (it runs as `dontAsk`, reported through `OnWarn`), `MaxTurns` 0 means
+  `EmbeddedMaxTurns`, and the policy is always `permission.StrictPolicy()`. A test keeps `fold`, `foldadapter`, `subagent`, `coordinator`
+  and `mcp` out of `agentcore`'s import graph. The new
+  [embedding guide](docs/guides/embedding.md) lists the extension points.
 - Compaction hooks on `compaction.Config`: `AfterCompact` (messages placed right
   after the summary, shown a `compaction.Compacted`), `MicroStub` (the text left in
   place of a cleared tool result; `compaction.DefaultMicroStub` keeps the first line
