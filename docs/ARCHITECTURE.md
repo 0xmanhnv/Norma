@@ -320,6 +320,10 @@ shell_read, shell_list, shell_close), and **deferred tools**, whose schemas are
 withheld from the model to save context and discovered on demand via
 `SearchExtraTools` / `ExecuteExtraTool`.
 
+An `Embedded` session (`agentcore.Options.Embedded`) adds none of these by default:
+it holds only the tools the host passes, never runs in `bypassPermissions`, and has a
+default turn limit. See the [embedding guide](guides/embedding.md).
+
 ---
 
 ## 5. Context and compaction

@@ -40,8 +40,30 @@ type Options struct {
 	// mid-session invalidates the cached conversation.
 	ModelSettings llm.ModelSettings
 
-	// Tools the agent may call. Defaults to tool.DefaultTools().
+	// Tools the agent may call. Defaults to tool.DefaultTools(), except with
+	// Embedded, where nil means no tools.
 	Tools []tool.CoreTool
+
+	// Embedded is the profile for a host that links corvid as a library in an
+	// unattended service (a platform's job worker, say) and wants the model to
+	// reach only the tools the host registers. With Embedded:
+	//
+	//   - Tools nil means no tools: the built-in file, shell and search tools
+	//     (tool.DefaultTools) are not added;
+	//   - the background-task tools and their manager are not added
+	//     (as with DisableBackgroundTasks);
+	//   - bypassPermissions is never in effect: a session or plan mode that asks
+	//     for it runs in dontAsk instead (deny what no rule allows), and
+	//     NewSession reports it through OnWarn;
+	//   - MaxTurns 0 means EmbeddedMaxTurns, not unlimited;
+	//   - Policy is always permission.StrictPolicy(): every check corvid can
+	//     run strict or compatible runs strict, and a looser Policy is
+	//     ignored (OnWarn is told).
+	//
+	// Everything else is the host's explicit choice and stays available: tools
+	// it passes in Tools (built-in ones included), deferred tools, web tools,
+	// memory, skills, MCP. See docs/guides/embedding.md.
+	Embedded bool
 
 	// DeferredTools names tools whose schemas are withheld from the model (only
 	// their names surface, e.g. via tool.RenderDeferredToolsBlock placed in the
@@ -292,16 +314,55 @@ type Session struct {
 	unlock    *tool.UnlockSet // deferred-tool call gate (nil when no deferred tools)
 }
 
+// EmbeddedMaxTurns is the turn limit of an Embedded session that sets none.
+const EmbeddedMaxTurns = 50
+
+// embeddedMode wraps a session's permission mode so bypassPermissions is never
+// in effect: it reads as dontAsk.
+func embeddedMode(base permission.Mode, f func() permission.Mode) func() permission.Mode {
+	return func() permission.Mode {
+		m := base
+		if f != nil {
+			m = f()
+		}
+		if m == permission.ModeBypass {
+			return permission.ModeDontAsk
+		}
+		return m
+	}
+}
+
 // NewSession builds a Session, applying defaults.
 func NewSession(opts Options) *Session {
 	tools := opts.Tools
-	if tools == nil {
+	if tools == nil && !opts.Embedded {
 		tools = tool.DefaultTools()
 	}
 	if opts.PermissionMode == "" {
 		opts.PermissionMode = permission.ModeDefault
 	}
+	var embeddedWarnings []string
+	if opts.Embedded {
+		opts.DisableBackgroundTasks = true
+		if opts.MaxTurns == 0 {
+			opts.MaxTurns = EmbeddedMaxTurns
+		}
+		if opts.PermissionMode == permission.ModeBypass {
+			opts.PermissionMode = permission.ModeDontAsk
+			embeddedWarnings = append(embeddedWarnings, "Embedded: bypassPermissions is not available; the session runs in dontAsk")
+		}
+		if loose := opts.Policy.Loosened(); len(loose) > 0 && opts.Policy != (permission.Policy{}) {
+			embeddedWarnings = append(embeddedWarnings, "Embedded: permission.Policy is always permission.StrictPolicy(); the looser settings given are ignored")
+		}
+		opts.Policy = permission.StrictPolicy()
+		if opts.Plan != nil && opts.Plan.TargetMode == permission.ModeBypass {
+			embeddedWarnings = append(embeddedWarnings, "Embedded: plan TargetMode bypassPermissions runs as dontAsk")
+		}
+	}
 	s := &Session{opts: opts}
+	for _, w := range embeddedWarnings {
+		s.warn(w)
+	}
 	for _, w := range opts.Policy.Loosened() {
 		s.warn(w)
 	}
@@ -658,6 +719,10 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 	}
 	if s.planCtrl != nil {
 		in.PermissionModeFunc = s.planCtrl.Mode
+	}
+	if s.opts.Embedded {
+		in.PermissionModeFunc = embeddedMode(in.PermissionMode, in.PermissionModeFunc)
+		in.PermissionMode = embeddedMode(in.PermissionMode, nil)()
 	}
 	// The session follows the loop however it ends. A caller that stops reading
 	// early would otherwise leave s.messages before this prompt, out of step with
