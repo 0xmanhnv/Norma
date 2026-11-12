@@ -165,3 +165,12 @@ func matchRule(rules []string, toolName string, sub Subject, deny bool) bool {
 	}
 	return false
 }
+
+// DeniedBy reports whether any of rules, read as deny rules, matches a call to
+// toolName with subject sub. A tool that runs what another tool would (an
+// interactive shell runs what Bash would) uses it to apply that tool's deny
+// rules as well as its own, so "Bash(rm:*)" is not evaded by typing rm into a
+// terminal session.
+func DeniedBy(rules []string, toolName string, sub Subject) bool {
+	return matchRule(rules, toolName, sub, true)
+}

@@ -71,8 +71,20 @@ func RecordTool(s *Store) tool.CoreTool {
 		},
 		ReadOnly:   func(json.RawMessage) bool { return false },
 		Concurrent: func(json.RawMessage) bool { return false },
-		Permissions: func(context.Context, json.RawMessage, permission.Context) permission.Decision {
-			return permission.Allowed()
+		// What is saved is shown to every later session, so a save is the one
+		// place a prompt injection read in this session can persist. It needs
+		// approval like any other write; a host that trusts it adds an allow
+		// rule for RecordMemory, or sets permission.Policy.MemoryWrites to
+		// "allow" (the behaviour before).
+		Permissions: func(_ context.Context, input json.RawMessage, pc permission.Context) permission.Decision {
+			if pc.Policy.Resolved().MemoryWrites == permission.MemoryWritesAllow {
+				return permission.Allowed()
+			}
+			var in struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(input, &in)
+			return permission.AskUser("save to long-term memory: " + in.Name)
 		},
 		Run: func(_ context.Context, input json.RawMessage, _ *tool.ToolContext) (tool.Result, error) {
 			var in struct {

@@ -56,6 +56,13 @@ type ToolContext struct {
 	// DEBIAN_FRONTEND — see tool.nonInteractiveEnv), which override any value
 	// inherited for those four keys. Naming one here is how a host takes it back.
 	Env []string
+	// RunDeferred is set by the agent loop. It runs a deferred tool that
+	// ExecuteExtraTool resolved through the loop's checks under that tool's
+	// own name (schema, permission pipeline, and hooks when the policy says
+	// so) and returns its result. ExecuteExtraTool refuses to run anything
+	// when it is nil, so a call that did not come through the loop runs
+	// nothing unchecked.
+	RunDeferred func(ctx context.Context, t CoreTool, input json.RawMessage) (Result, error)
 }
 
 func (tc *ToolContext) progress(msg string) {

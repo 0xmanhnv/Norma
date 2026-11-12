@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 
 	"github.com/0xmanhnv/corvid/llm"
+	"github.com/0xmanhnv/corvid/permission"
 )
 
 // EventType enumerates the eight hook points (FR-08.2).
@@ -44,7 +45,10 @@ type Event struct {
 
 // Result is a hook's response (FR-08.3).
 type Result struct {
-	// Decision is "block" to halt the action, "approve"/"" to continue.
+	// Decision is "block" to halt the action, "approve" or "" to continue.
+	// Any other value (a misspelt "Block", or "deny") also halts it, unless
+	// the run's permission.Policy.HookDecisions is "ignore_unknown", which
+	// continues as before.
 	Decision string
 	// Message explains a block (shown to the model).
 	Message string
@@ -59,7 +63,15 @@ type Result struct {
 	PreventContinuation bool
 }
 
-func (r Result) blocked() bool { return r.Decision == "block" }
+func (r Result) blocked(ctx context.Context) bool {
+	switch r.Decision {
+	case "block":
+		return true
+	case "", "approve":
+		return false
+	}
+	return permission.PolicyFrom(ctx).HookDecisions != permission.HookDecisionsIgnoreUnknown
+}
 
 // Func is a single hook callback.
 type Func func(ctx context.Context, ev Event) Result
@@ -94,7 +106,7 @@ func (r *Registry) run(ctx context.Context, t EventType, ev Event) []Result {
 func (r *Registry) PreToolUse(ctx context.Context, name string, input []byte) (bool, string, []byte) {
 	var updated []byte
 	for _, res := range r.run(ctx, PreToolUse, Event{ToolName: name, Input: input}) {
-		if res.blocked() {
+		if res.blocked(ctx) {
 			return true, res.Message, nil
 		}
 		if len(res.UpdatedInput) > 0 {
@@ -122,7 +134,7 @@ func (r *Registry) Stop(ctx context.Context, messages []llm.Message) (prevent bo
 		if res.PreventContinuation {
 			return true, nil, res.Message
 		}
-		if res.blocked() {
+		if res.blocked(ctx) {
 			msg := res.AdditionalContext
 			if msg == "" {
 				msg = res.Message

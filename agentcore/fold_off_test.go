@@ -32,7 +32,7 @@ func TestNoCompactorMeansBuiltinCompactionUnchanged(t *testing.T) {
 	var warns []string
 	s := NewSession(Options{
 		Compaction: &compaction.Config{ContextWindow: 200000},
-		OnWarn:     func(m string) { warns = append(warns, m) },
+		OnWarn:     func(m string) { warns = appendNonPolicy(warns, m) },
 	})
 	if s.compactor == nil {
 		t.Fatal("no compactor was installed")
@@ -48,7 +48,7 @@ func TestNoCompactorMeansBuiltinCompactionUnchanged(t *testing.T) {
 // Neither set is also a supported configuration and must stay silent.
 func TestNoContextManagerAtAllIsSilent(t *testing.T) {
 	var warns []string
-	s := NewSession(Options{OnWarn: func(m string) { warns = append(warns, m) }})
+	s := NewSession(Options{OnWarn: func(m string) { warns = appendNonPolicy(warns, m) }})
 	if s.compactor != nil {
 		t.Fatalf("a session with no context manager installed %T", s.compactor)
 	}

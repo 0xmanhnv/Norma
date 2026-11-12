@@ -60,6 +60,13 @@ type Options struct {
 	AllowedTools    []string
 	DisallowedTools []string
 	PermissionMode  permission.Mode
+	// Policy chooses between strict and compatible behaviour item by item
+	// (shell sessions, memory writes, unknown hook decisions, the names hooks
+	// see for deferred tools). The zero value is the documented defaults;
+	// permission.StrictPolicy() and permission.CompatiblePolicy() are the
+	// presets. NewSession reports every item not at its strict value through
+	// OnWarn.
+	Policy permission.Policy
 
 	// Hooks is optional lifecycle instrumentation (Phase 3).
 	Hooks harness.HookRunner
@@ -291,6 +298,9 @@ func NewSession(opts Options) *Session {
 		opts.PermissionMode = permission.ModeDefault
 	}
 	s := &Session{opts: opts}
+	for _, w := range opts.Policy.Loosened() {
+		s.warn(w)
+	}
 	// Exactly one context manager. Compactor (host-supplied) wins over the
 	// built-in Compaction: a session holds a single compactor, so the two can
 	// never both run — which matters because they have incompatible contracts
@@ -626,6 +636,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		Tasks:              s.tasks,
 		BashEnv:            s.opts.BashEnv,
 		PermissionMode:     s.opts.PermissionMode,
+		Policy:             s.opts.Policy,
 		Allowed:            s.opts.AllowedTools,
 		Disallowed:         s.opts.DisallowedTools,
 		CanUseTool:         s.opts.CanUseTool,

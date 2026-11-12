@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/0xmanhnv/corvid/llm"
 	"github.com/0xmanhnv/corvid/permission"
 )
 
@@ -214,10 +215,14 @@ func NewSearchExtraTools(reg *Registry, deferred []string) CoreTool {
 	})
 }
 
-// NewExecuteExtraTool builds the always-loaded invoker for deferred tools. It runs
-// the named tool from reg, but only if it is currently in the unlock set. Schema is
-// validated before the call. unlock may be nil (then every registry tool is
-// callable — no gating).
+// NewExecuteExtraTool builds the always-loaded invoker for deferred tools. It
+// resolves the named tool from reg, but only if it is currently in the unlock
+// set. unlock may be nil (then every registry tool is callable — no gating).
+//
+// It runs nothing itself: it hands the deferred tool to the agent loop
+// (ToolContext.RunDeferred), which checks it under its own name like a direct
+// call. A host that wraps tools keeps that path, since a wrapper passes the
+// ToolContext on; a call with no loop behind it is refused.
 func NewExecuteExtraTool(reg *Registry, unlock *UnlockSet) CoreTool {
 	return NewExecuteExtraToolFor(reg, unlock, nil)
 }
@@ -226,13 +231,13 @@ func NewExecuteExtraTool(reg *Registry, unlock *UnlockSet) CoreTool {
 // deferred. A call for a tool that is in the session but not deferred (its
 // schema is already in the model's list) is answered with "call it directly"
 // rather than "load the skill first": nothing gates it, the model only took
-// the wrong path. It is not run from here, so hooks and permission rules
-// keyed on the tool's own name still see every call to it.
+// the wrong path.
 func NewExecuteExtraToolFor(reg *Registry, unlock *UnlockSet, deferred []string) CoreTool {
 	isDeferred := map[string]bool{}
 	for _, n := range deferred {
 		isDeferred[n] = true
 	}
+	x := &executeExtra{reg: reg, unlock: unlock, deferred: deferred, isDeferred: isDeferred}
 	return Build(Spec{
 		Name: ExecuteExtraToolName,
 		Description: "Invoke a deferred tool discovered via " + SearchExtraToolsName +
@@ -251,43 +256,70 @@ func NewExecuteExtraToolFor(reg *Registry, unlock *UnlockSet, deferred []string)
 			},
 			"required": []any{"tool_name"},
 		},
+		// The wrapper itself needs no approval: the loop checks the deferred
+		// tool it hands over (ToolContext.RunDeferred).
 		Permissions: func(context.Context, json.RawMessage, permission.Context) permission.Decision {
 			return permission.Allowed()
 		},
 		Run: func(ctx context.Context, in json.RawMessage, tc *ToolContext) (Result, error) {
-			var args struct {
-				ToolName string          `json:"tool_name"`
-				Params   json.RawMessage `json:"params"`
+			t, params, refusal := x.resolve(in)
+			if refusal != nil {
+				return *refusal, nil
 			}
-			if err := json.Unmarshal(in, &args); err != nil {
-				return Errorf("Error: " + err.Error()), nil
+			if tc == nil || tc.RunDeferred == nil {
+				r := Errorf("Error: " + ExecuteExtraToolName +
+					" runs only inside the agent loop, which checks the deferred tool's permissions")
+				r.ErrorCode = CodePermissionDenied
+				return r, nil
 			}
-			if args.ToolName == "" {
-				return Errorf("Error: tool_name is required"), nil
-			}
-			t, ok := reg.Get(args.ToolName)
-			if !ok {
-				return Errorf(UnknownToolText(reg, args.ToolName)), nil
-			}
-			if args.ToolName == ExecuteExtraToolName || args.ToolName == SearchExtraToolsName ||
-				(unlock != nil && !unlock.Has(args.ToolName) && deferred != nil && !isDeferred[args.ToolName]) {
-				return Errorf(fmt.Sprintf("Error: %s is not a deferred tool: call %s directly with these params as its input, not through %s.",
-					args.ToolName, args.ToolName, ExecuteExtraToolName)), nil
-			}
-			if unlock != nil && !unlock.Has(args.ToolName) {
-				return Errorf("Error: tool " + args.ToolName +
-					" is not unlocked in this session — load the skill that provides it first."), nil
-			}
-			params := args.Params
-			if len(params) == 0 {
-				params = json.RawMessage("{}")
-			}
-			if err := ValidateInput(t.InputSchema(), params); err != nil {
-				return Errorf("Error: invalid params for " + args.ToolName + ": " + err.Error()), nil
-			}
-			return t.Call(ctx, params, tc)
+			return tc.RunDeferred(ctx, t, params)
 		},
 	})
+}
+
+type executeExtra struct {
+	reg        *Registry
+	unlock     *UnlockSet
+	deferred   []string
+	isDeferred map[string]bool
+}
+
+// resolve returns the deferred tool a call names and its input, or the error
+// result the call gets instead.
+func (x *executeExtra) resolve(in json.RawMessage) (CoreTool, json.RawMessage, *Result) {
+	refuse := func(text string, code llm.Code) (CoreTool, json.RawMessage, *Result) {
+		r := Errorf(text)
+		r.ErrorCode = code
+		return nil, nil, &r
+	}
+	var args struct {
+		ToolName string          `json:"tool_name"`
+		Params   json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(in, &args); err != nil {
+		return refuse("Error: "+err.Error(), CodeInvalidInput)
+	}
+	if args.ToolName == "" {
+		return refuse("Error: tool_name is required", CodeInvalidInput)
+	}
+	t, ok := x.reg.Get(args.ToolName)
+	if !ok {
+		return refuse(UnknownToolText(x.reg, args.ToolName), CodeUnknownTool)
+	}
+	if args.ToolName == ExecuteExtraToolName || args.ToolName == SearchExtraToolsName ||
+		(x.unlock != nil && !x.unlock.Has(args.ToolName) && x.deferred != nil && !x.isDeferred[args.ToolName]) {
+		return refuse(fmt.Sprintf("Error: %s is not a deferred tool: call %s directly with these params as its input, not through %s.",
+			args.ToolName, args.ToolName, ExecuteExtraToolName), CodeToolUnavailable)
+	}
+	if x.unlock != nil && !x.unlock.Has(args.ToolName) {
+		return refuse("Error: tool "+args.ToolName+
+			" is not unlocked in this session — load the skill that provides it first.", CodeToolUnavailable)
+	}
+	params := args.Params
+	if len(params) == 0 || string(params) == "null" {
+		params = json.RawMessage("{}")
+	}
+	return t, params, nil
 }
 
 // UnknownToolText is the error for a call to a tool the session lacks. When

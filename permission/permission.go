@@ -59,6 +59,9 @@ type Context struct {
 	WorkingDir string
 	Allowed    []string
 	Disallowed []string
+	// Policy is the session's strict-or-compatible choices (see Policy); a
+	// tool's CheckPermissions reads the items that concern it.
+	Policy Policy
 }
 
 // CanUseTool is the host's interactive approval callback (CLI prompt, GUI, or

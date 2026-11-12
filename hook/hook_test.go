@@ -3,6 +3,8 @@ package hook
 import (
 	"context"
 	"testing"
+
+	"github.com/0xmanhnv/corvid/permission"
 )
 
 func TestPreToolUseBlockAndRewrite(t *testing.T) {
@@ -50,5 +52,36 @@ func TestStopHookPreventTerminates(t *testing.T) {
 	prevent, _, msg := r.Stop(context.Background(), nil)
 	if !prevent || msg != "halt" {
 		t.Fatalf("prevent path wrong: prevent=%v msg=%q", prevent, msg)
+	}
+}
+
+// Only "approve" or an empty decision lets an action through: a misspelt or
+// unknown decision blocks instead of approving, unless the run's policy says
+// to ignore unknown decisions (the behaviour before).
+func TestUnknownDecisionBlocks(t *testing.T) {
+	for _, d := range []string{"deny", "Block", "BLOCK", "reject", "blokc"} {
+		r := NewRegistry().On(PreToolUse, func(context.Context, Event) Result {
+			return Result{Decision: d, Message: "no"}
+		})
+		if block, _, _ := r.PreToolUse(context.Background(), "Bash", nil); !block {
+			t.Errorf("decision %q let the tool call through", d)
+		}
+	}
+	ignore := permission.WithPolicy(context.Background(), permission.Policy{HookDecisions: permission.HookDecisionsIgnoreUnknown})
+	for _, d := range []string{"deny", "Block", "reject"} {
+		r := NewRegistry().On(PreToolUse, func(context.Context, Event) Result { return Result{Decision: d} })
+		if block, _, _ := r.PreToolUse(ignore, "Bash", nil); block {
+			t.Errorf("ignore_unknown: decision %q blocked", d)
+		}
+	}
+	r := NewRegistry().On(PreToolUse, func(context.Context, Event) Result { return Result{Decision: "block"} })
+	if block, _, _ := r.PreToolUse(ignore, "Bash", nil); !block {
+		t.Error(`ignore_unknown: "block" no longer blocks`)
+	}
+	for _, d := range []string{"", "approve"} {
+		r := NewRegistry().On(PreToolUse, func(context.Context, Event) Result { return Result{Decision: d} })
+		if block, _, _ := r.PreToolUse(context.Background(), "Bash", nil); block {
+			t.Errorf("decision %q blocked", d)
+		}
 	}
 }

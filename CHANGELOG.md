@@ -13,6 +13,57 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
   net/textproto, net/url) and golang.org/x/net v0.55.0 (used by WebFetch and
   web_search). The `go` directive is now 1.26.11, and CI runs `govulncheck` on every
   pull request.
+- **Every tightened check is a `permission.Policy` setting.** Each has a strict and a
+  compatible value (how corvid behaved before); the zero value of each is its
+  default, so a host that upgrades without changing its code keeps working.
+  `StrictPolicy()` and `CompatiblePolicy()` set every field, and a session reports
+  each field not at its strict value once through `OnWarn`. The settings:
+  `DeferredPermissions` (a deferred tool is permission-checked under its own name;
+  default strict), `DeferredHooks` (hooks also see it under its own name; default
+  compatible), `ShellSessions` (`shell_open`/`shell_send` ask, with the Bash floor and
+  `Bash(...)` deny rules; default strict), `MemoryWrites` (`RecordMemory` asks; default
+  strict), `HookDecisions` (an unknown hook decision blocks; default strict),
+  `RewrittenInput` (rewritten input is checked again; default strict), `CallPanics` (a
+  panic anywhere in a call fails that call; default strict), `CallsAfterCancel` (a
+  queued call does not start after cancel; default strict). Table: the
+  [permissions guide](docs/guides/permissions.md#strict-and-compatible-permissionpolicy).
+- **`ExecuteExtraTool` runs nothing itself.** It hands the deferred tool to the loop
+  (`ToolContext.RunDeferred`), which a tool wrapper passes on, so the check holds for
+  hosts that decorate their tools; with no loop behind it, it refuses. A test
+  enumerates every tool a session can hold and fails on one that changes something
+  and allows itself without a reviewed reason, under the strict and the compatible
+  preset.
+
+### Behaviour changes
+
+With the default policy, compared with before:
+
+- A deferred tool called through `ExecuteExtraTool` is checked by the permission
+  pipeline under its own name: a deny rule on that name, the tool's own permission
+  check (a hard deny holds even in `bypassPermissions`), and in `default` mode the
+  approval callback. A call `ExecuteExtraTool` makes outside the agent loop is refused.
+- `shell_open` and `shell_send` ask for approval (nothing changes in
+  `bypassPermissions`), and a `Bash(...)` deny rule or the Bash safety floor now also
+  denies them, in every mode.
+- `RecordMemory` asks for approval (nothing changes in `bypassPermissions`).
+- A `hook.Registry` decision other than `"block"`, `"approve"` or empty blocks.
+- Input a `PreToolUse` hook rewrites is validated against the tool's schema and
+  evaluated by the permission pipeline again.
+- A panic in a permission check, a hook or a result rewriter fails that call instead
+  of ending the process; a call queued behind others does not start once the run is
+  cancelled or out of time.
+
+### Upgrading
+
+- To keep a behaviour exactly as it was, set its field to the compatible value, or
+  start from `permission.CompatiblePolicy()`. Each compatible setting is reported once
+  per session through `OnWarn`.
+- To run everything strict, set `Options.Policy: permission.StrictPolicy()`. That adds
+  hooks seeing deferred tools under their own name: a hook that unwraps
+  `ExecuteExtraTool` itself then sees the call twice (once as `ExecuteExtraTool`, once
+  under the deferred tool's name).
+- A host that wraps tools keeps the deferred path working as long as its wrapper
+  passes the `ToolContext` it receives to the wrapped tool's `Call`.
 
 ### Changed
 
