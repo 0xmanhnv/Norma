@@ -27,6 +27,24 @@ func ValidateInput(schema map[string]any, raw json.RawMessage) error {
 	return validateValue(schema, v, "")
 }
 
+// SchemaError is a value that does not satisfy a schema. Error() is the message
+// for the model, which describes the value that was sent so the model can fix
+// it. Path, Keyword and Want say where and what without any of the value, for a
+// caller that must not repeat it.
+type SchemaError struct {
+	// Path is where the problem is: "" for the value itself, else property
+	// names the schema declares joined by "." and array indexes as "[i]".
+	Path string
+	// Keyword is the rule broken: "type", "required" or "enum".
+	Keyword string
+	// Want is what the schema asks for: the type, the missing property's name,
+	// or the allowed values as a JSON list without its brackets.
+	Want string
+	msg  string
+}
+
+func (e *SchemaError) Error() string { return e.msg }
+
 func validateValue(schema map[string]any, v any, path string) error {
 	typ, _ := schema["type"].(string)
 	switch typ {
@@ -40,7 +58,8 @@ func validateValue(schema map[string]any, v any, path string) error {
 		}
 		for _, req := range toStrings(schema["required"]) {
 			if _, present := m[req]; !present {
-				return fmt.Errorf("%s: missing required property %q", at(path), req)
+				return &SchemaError{Path: path, Keyword: "required", Want: req,
+					msg: fmt.Sprintf("%s: missing required property %q", at(path), req)}
 			}
 		}
 		props, _ := schema["properties"].(map[string]any)
@@ -108,9 +127,10 @@ func checkEnum(schema map[string]any, v any, path string) error {
 			return nil
 		}
 	}
-	list := strings.TrimSuffix(strings.TrimPrefix(string(b), "["), "]")
+	list := strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(string(b), "["), "]"), ",", ", ")
 	got, _ := json.Marshal(v)
-	return fmt.Errorf("%s: must be one of %s, got %s", at(path), strings.ReplaceAll(list, ",", ", "), got)
+	return &SchemaError{Path: path, Keyword: "enum", Want: list,
+		msg: fmt.Sprintf("%s: must be one of %s, got %s", at(path), list, got)}
 }
 
 func toStrings(v any) []string {
@@ -155,7 +175,8 @@ func wrongType(path, want string, v any) error {
 	if key != "" && !strings.HasSuffix(path, "]") {
 		field = fmt.Sprintf("%q: ", key)
 	}
-	return fmt.Errorf("%s: expected %s, got %s: use %s%s", at(path), want, describe(v), field, example(want, v))
+	return &SchemaError{Path: path, Keyword: "type", Want: want,
+		msg: fmt.Sprintf("%s: expected %s, got %s: use %s%s", at(path), want, describe(v), field, example(want, v))}
 }
 
 func describe(v any) string {

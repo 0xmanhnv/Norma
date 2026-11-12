@@ -45,6 +45,10 @@ When the model stops asking for tools, the loop does **not** always stop. In ord
   any did, the loop takes another turn so the model can react.
 - **Token budget.** If `TokenBudget > 0`, the agent is nudged to keep working until
   roughly 90% of the output budget or diminishing returns (`checkBudgetContinue`).
+- **Final output.** If `QueryInput.FinalOutput` is set, the answer must be a JSON
+  document that satisfies its schema. An invalid one is sent back as a user turn that
+  names where it is wrong and which rule it breaks, up to `MaxRepairs` times; then the
+  run ends `invalid_output` (see the [embedding guide](embedding.md#a-structured-final-answer)).
 
 Only when none of these fire does the loop finish `completed`.
 
@@ -109,11 +113,12 @@ Every exit carries a typed `TerminalReason` on the final `KindResult` event
 (`harness/event.go`): `completed`, `max_turns`, `timeout`, `model_error`,
 `refusal`, `prompt_too_long`, `aborted_streaming`, `aborted_tools`,
 `stop_hook_prevented`, `hook_stopped`, `blocking_limit`, `image_error`,
-`stop_requested`, `budget_exhausted`, `context_exhausted`. The `Terminal`
+`stop_requested`, `budget_exhausted`, `context_exhausted`, `invalid_output`. The `Terminal`
 struct also carries the error (if any), the stop reason the provider gave for the
 last model turn (`StopReason`), the run's own usage, what its subagents used
 (`SubagentUsage`, kept separate), the turn count, a full message snapshot, and the
-assistant's final text. `Terminal.Usage` covers that one `Prompt`;
+assistant's final text (with `FinalOutput`, also the checked document in
+`Terminal.Output`). `Terminal.Usage` covers that one `Prompt`;
 `Session.Usage()` is the running total for the session, including what a resumed
 transcript had recorded, and `Session.LastUsage()` is the most recent prompt alone. If the host stops ranging before the end, no `KindResult` is sent;
 `QueryInput.OnExit` still receives a `Terminal` with reason `consumer_stopped`.

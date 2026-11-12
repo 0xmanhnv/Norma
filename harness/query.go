@@ -175,6 +175,11 @@ type QueryInput struct {
 	// retried this way.
 	EscalateMaxTokens bool
 
+	// FinalOutput, when non-nil, requires the final answer to be a JSON
+	// document that satisfies a schema, with bounded repair turns (see
+	// FinalOutput). Nil = any final text completes the run.
+	FinalOutput *FinalOutput
+
 	// Settlement, when non-nil with a Prompt, runs a bounded wrap-up phase the
 	// moment a budget (MaxTurns/MaxDuration) is hit: it injects Prompt as a user
 	// turn and refuses calls to DisabledTools, so a budget-terminated run can
@@ -443,6 +448,8 @@ type loop struct {
 	stopDetail                   string // StopRequest.Detail of the request that ended the run
 	budget                       budgetTracker
 	lastContinue                 ContinueReason
+	outputRepairs                int             // repair turns taken for FinalOutput
+	output                       json.RawMessage // the validated final document (Terminal.Output)
 }
 
 // Stop reasons the loop acts on, as the adapters normalize them.
@@ -586,6 +593,7 @@ func (l *loop) finish(reason TerminalReason, err error, text string) {
 		Turns:         l.turnCount,
 		Messages:      l.messages,
 		Text:          text,
+		Output:        l.output,
 	}
 	l.yield(Event{Kind: KindResult, Terminal: l.terminal}, nil)
 }
@@ -813,6 +821,13 @@ func (l *loop) run() {
 				l.lastContinue = ContinueTokenBudget
 				continue
 			}
+			switch l.checkFinalOutput(asst.Text()) {
+			case outputRepair:
+				l.lastContinue = ContinueOutputRepair
+				continue
+			case outputRejected:
+				return
+			}
 			l.finish(ReasonCompleted, nil, asst.Text())
 			return
 		}
@@ -880,6 +895,40 @@ func (l *loop) run() {
 		l.turnCount = nextTurn
 		l.lastContinue = ContinueNextTurn
 	}
+}
+
+// What checkFinalOutput decided about an answer.
+type outputVerdict int
+
+const (
+	outputAccepted outputVerdict = iota // nothing to check, or the answer is valid
+	outputRepair                        // a repair turn was appended: take another turn
+	outputRejected                      // no repair left: the run has finished
+)
+
+// checkFinalOutput checks the answer the run is about to complete with against
+// QueryInput.FinalOutput. A valid document is kept for Terminal.Output. An
+// invalid one gets a repair turn while repairs are left, and otherwise ends the
+// run with ReasonInvalidOutput.
+func (l *loop) checkFinalOutput(text string) outputVerdict {
+	fo := l.in.FinalOutput
+	if fo == nil {
+		return outputAccepted
+	}
+	doc, problem := checkFinalOutput(fo.Schema, text)
+	if problem == "" {
+		l.output = doc
+		return outputAccepted
+	}
+	if l.outputRepairs < fo.repairs() {
+		l.outputRepairs++
+		m := llm.UserText(fmt.Sprintf(repairPromptFormat, problem))
+		l.messages = append(l.messages, m)
+		l.record(m, llm.Usage{})
+		return outputRepair
+	}
+	l.finish(ReasonInvalidOutput, llm.WrapError(tool.CodeInvalidOutput, "", &OutputError{Problem: problem, Repairs: l.outputRepairs}), text)
+	return outputRejected
 }
 
 // appendToolResults appends the turn's tool results to the conversation as one
