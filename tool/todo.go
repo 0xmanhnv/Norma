@@ -34,25 +34,36 @@ type Todo struct {
 	//
 	// A todo written by an older version carries a "ref" object instead; its
 	// string fields are read into Meta under the same keys (see UnmarshalJSON).
+	//
+	// Stored, and read by the host, Meta is a map. The TodoWrite tool offers the
+	// model a list of {"key","value"} pairs instead, because a schema with an
+	// open object cannot be sent to a provider in strict tool-call mode; both
+	// shapes are read.
 	Meta map[string]string `json:"meta,omitempty"`
 }
 
-// UnmarshalJSON reads a todo. Besides "meta" it accepts the deprecated "ref"
-// object earlier versions wrote: each of its string fields becomes a Meta
-// entry under the same key, unless "meta" already has that key. Stored lists
-// and transcripts from before the change therefore load unchanged. "ref" is
-// never written back.
+// UnmarshalJSON reads a todo. "meta" is an object of string values (how a todo
+// is stored) or a list of {"key","value"} string pairs (how the TodoWrite tool
+// offers it to the model); an empty key is dropped and a repeated key keeps its
+// last value. Besides "meta" it accepts the deprecated "ref" object earlier
+// versions wrote: each of its string fields becomes a Meta entry under the same
+// key, unless "meta" already has that key. Stored lists and transcripts from
+// before the change therefore load unchanged. "ref" is never written back.
 func (t *Todo) UnmarshalJSON(data []byte) error {
 	var in struct {
-		Content string            `json:"content"`
-		Status  TodoStatus        `json:"status"`
-		Meta    map[string]string `json:"meta"`
-		Ref     map[string]any    `json:"ref"` // deprecated
+		Content string          `json:"content"`
+		Status  TodoStatus      `json:"status"`
+		Meta    json.RawMessage `json:"meta"`
+		Ref     map[string]any  `json:"ref"` // deprecated
 	}
 	if err := json.Unmarshal(data, &in); err != nil {
 		return err
 	}
-	t.Content, t.Status, t.Meta = in.Content, in.Status, in.Meta
+	meta, err := decodeTodoMeta(in.Meta)
+	if err != nil {
+		return err
+	}
+	t.Content, t.Status, t.Meta = in.Content, in.Status, meta
 	for k, v := range in.Ref {
 		s, ok := v.(string)
 		if !ok || s == "" {
@@ -70,6 +81,35 @@ func (t *Todo) UnmarshalJSON(data []byte) error {
 		t.Meta = nil
 	}
 	return nil
+}
+
+// decodeTodoMeta reads the "meta" member of a todo in either shape.
+func decodeTodoMeta(raw json.RawMessage) (map[string]string, error) {
+	raw = json.RawMessage(strings.TrimSpace(string(raw)))
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	if raw[0] != '[' {
+		var m map[string]string
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, fmt.Errorf("todo meta: %w", err)
+		}
+		return m, nil
+	}
+	var pairs []struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(raw, &pairs); err != nil {
+		return nil, fmt.Errorf("todo meta: %w", err)
+	}
+	m := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		if p.Key != "" {
+			m[p.Key] = p.Value
+		}
+	}
+	return m, nil
 }
 
 // TodoPersister keeps a todo list outside the process, so that it survives a
@@ -201,7 +241,7 @@ func (s *TodoStore) Tool() CoreTool {
 	return Build(Spec{
 		Name:        TodoWriteName,
 		Description: "Records and updates a structured todo list for the current task. Use it to plan multi-step work and to mark progress — replace the whole list each call, marking exactly one item in_progress while working.",
-		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions. Optional meta carries free-form string keys the host gave you for a todo; pass them back unchanged.",
+		Prompt:      "status is one of: pending, in_progress, completed. Keep the list current: mark a task completed as soon as it's done; don't batch completions. Optional meta is a list of {key, value} string pairs the host gave you for a todo; pass them back unchanged.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -213,9 +253,17 @@ func (s *TodoStore) Tool() CoreTool {
 							"content": map[string]any{"type": "string"},
 							"status":  map[string]any{"type": "string", "enum": []any{"pending", "in_progress", "completed"}},
 							"meta": map[string]any{
-								"type":                 "object",
-								"description":          "Optional. Free-form string keys and values kept with the todo and returned unchanged, such as the id of a record this todo tracks. Omit for a plain todo.",
-								"additionalProperties": map[string]any{"type": "string"},
+								"type":        "array",
+								"description": "Optional. A list of {key, value} string pairs kept with the todo and returned unchanged, such as the id of a record this todo tracks. Omit for a plain todo.",
+								"items": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"key":   map[string]any{"type": "string"},
+										"value": map[string]any{"type": "string"},
+									},
+									"required":             []any{"key", "value"},
+									"additionalProperties": false,
+								},
 							},
 						},
 						"required": []any{"content", "status"},
