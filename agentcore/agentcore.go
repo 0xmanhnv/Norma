@@ -197,6 +197,12 @@ type Options struct {
 	// MaxDuration bounds wall-clock run time, checked at the turn boundary (never
 	// mid-stream), so a run ends cleanly rather than being aborted in flight (0 = off).
 	MaxDuration time.Duration
+	// FinalOutput, when set, requires every Prompt's final answer to be a JSON
+	// document that satisfies a schema: an invalid answer is sent back for
+	// repair a bounded number of times, and the run then ends with
+	// harness.ReasonInvalidOutput. Nil = any final text completes the run.
+	// See FinalOutput and docs/guides/embedding.md.
+	FinalOutput *FinalOutput
 	// Settlement, when set with a Prompt, runs a bounded wrap-up phase when a budget
 	// (MaxTurns/MaxDuration) is hit — injecting the prompt and refusing calls to
 	// DisabledTools — so a budget-terminated run can write down what it has. See
@@ -276,6 +282,20 @@ type Options struct {
 	Deps harness.QueryDeps
 }
 
+// FinalOutput is the shape a session's final answers must have.
+type FinalOutput struct {
+	// Schema is the JSON Schema of the answer. It must be a JSON object;
+	// anything else makes the session unusable (Session.Err). The checked
+	// keywords are those of tool inputs: type, required, properties, items and
+	// enum. The schema is not shown to the model: say in the prompt what to
+	// answer.
+	Schema json.RawMessage
+	// MaxRepairs is how many times an invalid answer is sent back to the model
+	// with what is wrong, per Prompt: 0 means harness.DefaultOutputRepairs (1),
+	// a negative value means none.
+	MaxRepairs int
+}
+
 // PlanOptions configures plan mode.
 type PlanOptions struct {
 	// Approver decides whether a presented plan is accepted. Nil auto-approves.
@@ -316,6 +336,9 @@ type Session struct {
 	writer    *transcript.Writer
 	tasks     *tool.Manager
 	unlock    *tool.UnlockSet // deferred-tool call gate (nil when no deferred tools)
+
+	finalOutput *harness.FinalOutput // Options.FinalOutput with its schema decoded
+	err         error                // why the session cannot run (Err); nil when it can
 }
 
 // EmbeddedMaxTurns is the turn limit of an Embedded session that sets none.
@@ -336,7 +359,8 @@ func embeddedMode(base permission.Mode, f func() permission.Mode) func() permiss
 	}
 }
 
-// NewSession builds a Session, applying defaults.
+// NewSession builds a Session, applying defaults. A configuration it cannot run
+// with is reported by Session.Err (and OnWarn) rather than by a panic.
 func NewSession(opts Options) *Session {
 	tools := opts.Tools
 	if tools == nil && !opts.Embedded {
@@ -366,6 +390,12 @@ func NewSession(opts Options) *Session {
 	s := &Session{opts: opts}
 	for _, w := range embeddedWarnings {
 		s.warn(w)
+	}
+	if opts.FinalOutput != nil {
+		s.finalOutput, s.err = compileFinalOutput(opts.FinalOutput)
+		if s.err != nil {
+			s.warn(s.err.Error())
+		}
 	}
 	for _, w := range opts.Policy.Loosened() {
 		s.warn(w)
@@ -450,6 +480,26 @@ func NewSession(opts Options) *Session {
 	}
 	return s
 }
+
+// compileFinalOutput decodes the schema of a FinalOutput. Each session gets its
+// own copy, so sessions built from the same Options share nothing mutable.
+func compileFinalOutput(fo *FinalOutput) (*harness.FinalOutput, error) {
+	var schema map[string]any
+	if err := json.Unmarshal(fo.Schema, &schema); err != nil || schema == nil {
+		msg := "agentcore: FinalOutput.Schema must be a JSON object"
+		if err != nil {
+			return nil, llm.WrapError(llm.CodeInvalidConfig, msg, err)
+		}
+		return nil, llm.NewError(llm.CodeInvalidConfig, msg)
+	}
+	return &harness.FinalOutput{Schema: schema, MaxRepairs: fo.MaxRepairs}, nil
+}
+
+// Err reports a configuration the session cannot run with, such as a
+// FinalOutput.Schema that is not a JSON object (llm.CodeInvalidConfig). A
+// session with an error refuses every Prompt with it before any model call;
+// nil means the session can run.
+func (s *Session) Err() error { return s.err }
 
 // Close releases session resources, killing any background tasks and removing
 // their temporary output directory. Safe to call multiple times. Hosts running a
@@ -627,8 +677,13 @@ type hookFirer interface {
 
 // Prompt appends a user message and streams the agent loop to completion. The
 // final event is KindResult; Session state is updated when the consumer reaches
-// it (FR-07.3).
+// it (FR-07.3). A session with a configuration error (Err) yields only that
+// error, before any model call, and leaves its state as it was.
 func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Event, error] {
+	if s.err != nil {
+		err := s.err
+		return func(yield func(harness.Event, error) bool) { yield(harness.Event{}, err) }
+	}
 	// Auto-inject memories relevant to this prompt (Phase 4).
 	if s.opts.Memory != nil && s.opts.Memory.AutoInject && s.opts.Memory.Store != nil {
 		max := s.opts.Memory.MaxInject
@@ -717,6 +772,7 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		TokenBudget:        s.opts.TokenBudget,
 		EscalateMaxTokens:  s.opts.EscalateMaxTokens,
 		NonStreaming:       s.opts.NonStreaming,
+		FinalOutput:        s.finalOutput,
 	}
 	if s.writer != nil {
 		in.Recorder = s.writer

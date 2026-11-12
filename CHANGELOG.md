@@ -6,6 +6,23 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 
 ## Unreleased
 
+### Added
+
+- **A schema-checked final answer.** `agentcore.Options.FinalOutput` (`Schema`, a JSON
+  Schema, and `MaxRepairs`) makes the final answer of every `Prompt` a JSON document
+  checked against the schema, with the keywords tool inputs use (`type`, `required`,
+  `properties`, `items`, `enum`). An invalid answer is sent back as the next user turn
+  with where it is wrong and the rule it breaks, never its content, up to `MaxRepairs`
+  times (0 means 1, negative means none); the run then ends with
+  `harness.ReasonInvalidOutput` and a `Terminal.Err` carrying `tool.CodeInvalidOutput`
+  and a `*harness.OutputError`. A valid document is in the new `Terminal.Output`. A
+  schema that is not a JSON object makes the session refuse every `Prompt`
+  (`Session.Err`, `llm.CodeInvalidConfig`). Off by default; works with `Embedded`;
+  streaming is unchanged. The loop-level setting is `harness.QueryInput.FinalOutput`,
+  and `tool.SchemaError` gives a validation failure's path, keyword and expected value
+  without the value. See the
+  [embedding guide](docs/guides/embedding.md#a-structured-final-answer).
+
 ## v0.5.0 (2026-11-12)
 
 ### Security

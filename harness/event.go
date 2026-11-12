@@ -6,7 +6,11 @@
 // of Events and threads context cancellation throughout.
 package harness
 
-import "github.com/0xmanhnv/corvid/llm"
+import (
+	"encoding/json"
+
+	"github.com/0xmanhnv/corvid/llm"
+)
 
 // EventKind classifies a loop Event.
 type EventKind string
@@ -55,6 +59,10 @@ const (
 	// system prompt, the tools, the most recent turn) is by itself too large,
 	// so no compaction can help. Terminal.Err carries llm.CodeContextOverflow.
 	ReasonContextExhausted TerminalReason = "context_exhausted"
+	// ReasonInvalidOutput: the final answer did not satisfy
+	// QueryInput.FinalOutput after the repair turns allowed. Terminal.Err
+	// carries tool.CodeInvalidOutput and an *OutputError.
+	ReasonInvalidOutput TerminalReason = "invalid_output"
 )
 
 // ContinueReason names why the loop took another turn. These drive control
@@ -69,6 +77,7 @@ const (
 	ContinueStopHookBlocking        ContinueReason = "stop_hook_blocking"
 	ContinueTokenBudget             ContinueReason = "token_budget_continuation"
 	ContinueTaskNotification        ContinueReason = "task_notification"
+	ContinueOutputRepair            ContinueReason = "output_repair"
 )
 
 // Terminal is the final state of a Query, delivered as the KindResult event.
@@ -90,4 +99,8 @@ type Terminal struct {
 	Turns         int
 	Messages      []llm.Message // full conversation snapshot (non-destructive: retains history)
 	Text          string        // the assistant's final text, for convenience
+	// Output is the final answer as a JSON document, set when the run had a
+	// QueryInput.FinalOutput and ended with ReasonCompleted: the document
+	// checked against its schema (Text without a code fence around it).
+	Output json.RawMessage
 }
