@@ -53,6 +53,10 @@ type Config struct {
 	// the calling run's (harness.ParentRun), so it caches the way its parent
 	// does. Prompt caching itself is on by default either way.
 	ModelSettings llm.ModelSettings
+	// Budget is the spending limit of a subagent started with no calling run
+	// (Run, RunWithSummary, the coordinator). One started from a tool call
+	// charges its parent's Budget (harness.ParentRun) instead.
+	Budget harness.Budget
 }
 
 type ctxKey int
@@ -205,6 +209,7 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		CanUseTool:     cfg.CanUseTool,
 		Hooks:          cfg.Hooks,
 		ModelSettings:  cfg.ModelSettings,
+		Budget:         cfg.Budget,
 	}
 	if p, ok := harness.ParentRunFrom(ctx); ok {
 		if in.ModelSettings == (llm.ModelSettings{}) {
@@ -227,6 +232,9 @@ func run(ctx context.Context, cfg Config, def Definition, agentType, prompt, wor
 		in.RewriteToolResult = p.RewriteToolResult
 		in.Settlement = p.Settlement
 		in.Policy = p.Policy
+		if p.Budget != nil {
+			in.Budget = p.Budget
+		}
 		if p.AgentID != "" {
 			in.AgentID = p.AgentID + "/" + agentType
 		}

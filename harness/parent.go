@@ -29,6 +29,8 @@ type ParentRun struct {
 	Settlement         *Settlement
 	// Policy is the calling run's permission.Policy.
 	Policy permission.Policy
+	// Budget is the calling run's spending limit, shared with the child.
+	Budget Budget
 	// ModelSettings are the calling run's cache lifetime, thinking mode and
 	// effort, so a child is sent the same way unless it is configured itself.
 	ModelSettings llm.ModelSettings
@@ -77,6 +79,7 @@ func (l *loop) parentRun(mode permission.Mode) ParentRun {
 		RewriteToolResult:  l.in.RewriteToolResult,
 		Settlement:         l.in.Settlement,
 		Policy:             l.in.Policy,
+		Budget:             l.in.Budget,
 		ModelSettings:      l.in.ModelSettings,
 	}
 }

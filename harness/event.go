@@ -49,6 +49,7 @@ const (
 	ReasonTimeout           TerminalReason = "timeout"             // hit a wall-clock run budget (host-imposed)
 	ReasonConsumerStopped   TerminalReason = "consumer_stopped"    // the caller stopped reading the event stream (OnExit only)
 	ReasonStopRequested     TerminalReason = "stop_requested"      // QueryInput.StopCheck ended the run (Terminal.Detail says why)
+	ReasonBudgetExhausted   TerminalReason = "budget_exhausted"    // QueryInput.Budget allowed no further model call
 	// ReasonContextExhausted: the host's StopCheck found that the conversation
 	// can no longer be made to fit the model's window — what must be kept (the
 	// system prompt, the tools, the most recent turn) is by itself too large,

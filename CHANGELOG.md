@@ -205,6 +205,13 @@ With the default policy, compared with before:
 
 ### Added
 
+- **A hard spending limit shared with subagents.** `QueryInput.Budget` /
+  `Options.Budget` (`harness.Budget`, `harness.NewBudget`) is charged after every
+  model response, before its tool calls start, and asked before every model call; when
+  it says no, the run ends with the new `ReasonBudgetExhausted`. Subagents charge
+  their parent's budget (`ParentRun.Budget`), or `subagent.Config.Budget` when they
+  have no parent, so fan-out cannot overrun it. `RunState.SubagentUsage` shows a
+  `StopCheck` what finished subagents spent.
 - Compaction hooks on `compaction.Config`: `AfterCompact` (messages placed right
   after the summary, shown a `compaction.Compacted`), `MicroStub` (the text left in
   place of a cleared tool result; `compaction.DefaultMicroStub` keeps the first line
