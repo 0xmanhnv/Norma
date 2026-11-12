@@ -6,6 +6,8 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 
 ## Unreleased
 
+## v0.5.0 (2026-11-12)
+
 ### Security
 
 - **Go 1.26.11 and golang.org/x/net v0.62.0.** `govulncheck` found 19 reachable
