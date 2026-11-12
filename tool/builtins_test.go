@@ -183,6 +183,32 @@ func TestWebFetch(t *testing.T) {
 	}
 }
 
+// A host that wants scripts, styles and the like sets AllowStaticAssets: the
+// fetch goes through, and the model-facing text stops forbidding it.
+func TestWebFetchAllowStaticAssets(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("content-type", "application/javascript")
+		w.Write([]byte("console.log(1)"))
+	}))
+	defer srv.Close()
+
+	cfg := WebFetchConfig{AllowStaticAssets: true}
+	raw, _ := json.Marshal(map[string]any{"url": srv.URL + "/app.js"})
+	res, err := NewWebFetch(cfg).Call(context.Background(), raw, &ToolContext{})
+	if err != nil || res.IsError || !strings.Contains(res.Flatten(), "console.log(1)") || hits != 1 {
+		t.Fatalf("allowed asset fetch: %q isErr=%v err=%v hits=%d", res.Flatten(), res.IsError, err, hits)
+	}
+	allowed, refusing := NewWebFetch(cfg), NewWebFetch(WebFetchConfig{})
+	if strings.Contains(allowed.Description(), "static assets") || strings.Contains(allowed.Description(), "must not be fetched") {
+		t.Fatalf("the description still forbids static assets: %s", allowed.Description())
+	}
+	if !strings.Contains(refusing.Description(), "static assets") {
+		t.Fatalf("the default description must keep the rule: %s", refusing.Description())
+	}
+}
+
 func TestWebFetchRejectsStaticAssets(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -331,19 +357,19 @@ func TestWebFetchExtract(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Without extract: no RECON section, markdown body only.
+	// Without extract: no EXTRACT section, markdown body only.
 	raw, _ := json.Marshal(map[string]any{"url": srv.URL})
 	out := mustFetch(t, raw)
-	if strings.Contains(out, "RECON") {
-		t.Fatalf("extract=false must not emit RECON: %q", out)
+	if strings.Contains(out, "EXTRACT") {
+		t.Fatalf("extract=false must not emit EXTRACT: %q", out)
 	}
 
 	// With extract: comments, script src, inline endpoint, hidden field, meta all preserved.
 	raw, _ = json.Marshal(map[string]any{"url": srv.URL, "extract": true})
 	out = mustFetch(t, raw)
-	for _, want := range []string{"RECON", "backdoor /admin.php", "/js/app.js", "/api/v1/users", "csrf(hidden=abc123)", "generator=WP 6.0", "POST /login"} {
+	for _, want := range []string{"=== EXTRACT ===", "backdoor /admin.php", "/js/app.js", "/api/v1/users", "csrf(hidden=abc123)", "generator=WP 6.0", "POST /login"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("recon missing %q in:\n%s", want, out)
+			t.Fatalf("extract section missing %q in:\n%s", want, out)
 		}
 	}
 }

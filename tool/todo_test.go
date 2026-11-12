@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -89,7 +90,7 @@ func TestTodoWriteKeepsMeta(t *testing.T) {
 	s := NewTodoStore()
 	in := `{"todos":[
 		{"content":"plain","status":"pending"},
-		{"content":"linked","status":"completed","meta":{"ticket":"T-7"}},
+		{"content":"linked","status":"completed","meta":[{"key":"ticket","value":"T-7"}]},
 		{"content":"old shape","status":"in_progress","ref":{"record_id":"R1"}}]}`
 	if err := ValidateInput(s.Tool().InputSchema(), []byte(in)); err != nil {
 		t.Fatalf("the tool's schema rejects the input: %v", err)
@@ -180,4 +181,67 @@ func TestPersistentTodoStoreErrors(t *testing.T) {
 	if _, err := NewPersistentTodoStore(TodoFile(path)); err == nil {
 		t.Fatal("a corrupt file loaded without an error")
 	}
+}
+
+// "meta" is read in both shapes: the object a todo is stored as, and the list of
+// {"key","value"} pairs the tool offers the model. An empty key is dropped, a
+// repeated key keeps its last value, and the old "ref" object still fills in
+// what "meta" does not name.
+func TestTodoReadsMetaAsPairsOrObject(t *testing.T) {
+	cases := []struct {
+		name, json string
+		want       map[string]string
+		wantErr    bool
+	}{
+		{"object", `{"content":"c","status":"pending","meta":{"a":"1"}}`, map[string]string{"a": "1"}, false},
+		{"pairs", `{"content":"c","status":"pending","meta":[{"key":"a","value":"1"},{"key":"b","value":"x|y"}]}`, map[string]string{"a": "1", "b": "x|y"}, false},
+		{"repeated key keeps the last", `{"content":"c","status":"pending","meta":[{"key":"a","value":"1"},{"key":"a","value":"2"}]}`, map[string]string{"a": "2"}, false},
+		{"empty key dropped", `{"content":"c","status":"pending","meta":[{"key":"","value":"1"}]}`, nil, false},
+		{"empty list", `{"content":"c","status":"pending","meta":[]}`, nil, false},
+		{"null", `{"content":"c","status":"pending","meta":null}`, nil, false},
+		{"pairs and ref", `{"content":"c","status":"pending","meta":[{"key":"a","value":"1"}],"ref":{"a":"old","b":"2"}}`, map[string]string{"a": "1", "b": "2"}, false},
+		{"non-string value", `{"content":"c","status":"pending","meta":[{"key":"a","value":7}]}`, nil, true},
+		{"not an object or list", `{"content":"c","status":"pending","meta":"a=1"}`, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var td Todo
+			err := json.Unmarshal([]byte(tc.json), &td)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err == nil && !reflect.DeepEqual(td.Meta, tc.want) {
+				t.Fatalf("meta = %v, want %v", td.Meta, tc.want)
+			}
+		})
+	}
+}
+
+// A provider's strict tool-call mode takes only closed objects: every object
+// lists its properties and none is open to arbitrary keys. The TodoWrite schema
+// must stay inside that, or a host that sends tools in strict mode has to send
+// this one without it.
+func TestTodoWriteSchemaHasNoOpenObject(t *testing.T) {
+	var walk func(path string, n any)
+	walk = func(path string, n any) {
+		switch v := n.(type) {
+		case map[string]any:
+			if v["type"] == "object" {
+				if _, ok := v["properties"]; !ok {
+					t.Errorf("%s is an object with no declared properties (free-form keys)", path)
+				}
+				if ap, ok := v["additionalProperties"]; ok && ap != false {
+					t.Errorf("%s has additionalProperties %v, want absent or false", path, ap)
+				}
+			}
+			for k, c := range v {
+				walk(path+"."+k, c)
+			}
+		case []any:
+			for i, c := range v {
+				walk(fmt.Sprintf("%s[%d]", path, i), c)
+			}
+		}
+	}
+	walk("schema", NewTodoStore().Tool().InputSchema())
 }

@@ -36,25 +36,55 @@ type WebFetchConfig struct {
 	// HTTP/2 mismatch). Off by default: when the proxy is what enforces where
 	// requests may go, or records them, a direct retry would route around it.
 	DirectFallback bool
+	// AllowStaticAssets lets WebFetch fetch scripts, styles, source maps, images,
+	// fonts and media by URL. By default it refuses them: they are linked
+	// resources, not page content, and a model that is told to read pages
+	// should fetch the page that owns the asset. Set it for a host that wants
+	// to read such files (a raw source file served as .js, an .svg diagram).
+	AllowStaticAssets bool
+}
+
+const (
+	webFetchBaseDescription = "Fetches an HTTP(S) HTML page, documentation page, or API response and returns it as Markdown. "
+	webFetchAssetRule       = "Do not use this tool for static assets, including JavaScript, CSS, source maps, images, fonts, audio, or video—even if their URLs are found in a fetched page or explicitly requested. Fetch the owning page instead. "
+	webFetchExtractRule     = "Set `extract=true` to list comments, scripts, stylesheets, endpoints, forms, links, and meta tags. "
+	webFetchAssetListRule   = "Listed asset URLs are for inspection only and must not be fetched. "
+	webFetchTail            = "Large responses may be truncated. This makes an external network request."
+)
+
+// webFetchDescription is the model-facing description. The rules about static
+// assets are left out when the host allows them.
+func webFetchDescription(cfg WebFetchConfig) string {
+	if cfg.AllowStaticAssets {
+		return webFetchBaseDescription + webFetchExtractRule + webFetchTail
+	}
+	return webFetchBaseDescription + webFetchAssetRule + webFetchExtractRule + webFetchAssetListRule + webFetchTail
+}
+
+func webFetchURLDescription(cfg WebFetchConfig) string {
+	if cfg.AllowStaticAssets {
+		return "The absolute http(s) URL to fetch."
+	}
+	return "The absolute http(s) URL to fetch. JS/CSS/static-asset suffix URLs are not allowed."
 }
 
 // NewWebFetch builds the WebFetch tool: fetches a URL over HTTP(S) and returns
 // its content as Markdown (HTML is parsed and rendered; non-HTML is returned
-// as-is). With extract=true it also appends a RECON section that preserves the
-// signal HTML→Markdown normally discards — comments, <script> sources, inline
-// endpoints, forms/inputs (including hidden) and meta tags — useful for security
-// reconnaissance. cfg optionally routes requests through a proxy and/or skips
+// as-is). With extract=true it also appends an EXTRACT section that preserves
+// the detail HTML→Markdown normally discards — comments, <script> sources,
+// inline endpoints, forms/inputs (including hidden) and meta tags — for
+// inspecting how a page is built. cfg optionally routes requests through a proxy and/or skips
 // TLS verification (see WebFetchConfig). It is network-facing, so it is not part
 // of DefaultTools and requires permission to run.
 func NewWebFetch(cfg WebFetchConfig) CoreTool {
 	return Build(Spec{
 		Name:        WebFetchName,
-		Description: "Fetches an HTTP(S) HTML page, documentation page, or API response and returns it as Markdown. Do not use this tool for static assets, including JavaScript, CSS, source maps, images, fonts, audio, or video—even if their URLs are found in a fetched page or explicitly requested. Fetch the owning page instead. Set `extract=true` to list comments, scripts, stylesheets, endpoints, forms, links, and meta tags. Listed asset URLs are for inspection only and must not be fetched. Large responses may be truncated. This makes an external network request.",
+		Description: webFetchDescription(cfg),
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"url":     map[string]any{"type": "string", "description": "The absolute http(s) URL to fetch. JS/CSS/static-asset suffix URLs are not allowed."},
-				"extract": map[string]any{"type": "boolean", "description": "When true, append a RECON section preserving HTML comments, <script src>, inline-script endpoints, forms/inputs (including hidden), links and meta tags. Default false."},
+				"url":     map[string]any{"type": "string", "description": webFetchURLDescription(cfg)},
+				"extract": map[string]any{"type": "boolean", "description": "When true, append an EXTRACT section preserving HTML comments, <script src>, inline-script endpoints, forms/inputs (including hidden), links and meta tags. Default false."},
 			},
 			"required": []any{"url"},
 		},
@@ -182,7 +212,7 @@ func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *
 		if !strings.HasPrefix(in.URL, "http://") && !strings.HasPrefix(in.URL, "https://") {
 			return Errorf("Error: url must start with http:// or https://"), nil
 		}
-		if ext := staticAssetExt(in.URL); ext != "" {
+		if ext := staticAssetExt(in.URL); ext != "" && !cfg.AllowStaticAssets {
 			return Errorf("Error: WebFetch does not fetch static assets (" + ext + " file). It reads HTML pages, documentation, and API responses — not linked resources like scripts, styles, images, or fonts. Fetch the page that references this asset instead."), nil
 		}
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -191,18 +221,18 @@ func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *
 		if err != nil {
 			return Errorf("Error: " + err.Error()), nil
 		}
-		req.Header.Set("user-agent", "corvid/0.4")
+		req.Header.Set("user-agent", fetchUserAgent)
 		resp, err := client.Do(req)
 		// One direct retry when the proxied attempt failed for a proxy-caused reason.
 		// A non-proxy error (bad host, caller timeout/cancel) is returned as-is — a
 		// direct retry wouldn't fix it. The direct response is NOT captured by the proxy.
 		if err != nil && direct != nil && proxyLikelyErr(err) {
 			if r2, e2 := http.NewRequestWithContext(cctx, http.MethodGet, in.URL, nil); e2 == nil {
-				r2.Header.Set("user-agent", "corvid/0.4")
+				r2.Header.Set("user-agent", fetchUserAgent)
 				if resp2, err2 := direct.Do(r2); err2 == nil {
 					resp, err = resp2, nil
 				} else {
-					err = err2 // surface the direct failure (more representative of the target)
+					err = err2 // surface the direct failure (more representative of the server)
 				}
 			}
 		}
@@ -213,7 +243,7 @@ func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxFetchBytes))
 
 		header := fmt.Sprintf("[%d %s] %s\n", resp.StatusCode, http.StatusText(resp.StatusCode), in.URL)
-		// Cheap fingerprint signal that HTML→Markdown would otherwise hide.
+		// The headers that name the server software, which HTML→Markdown would hide.
 		if sv := resp.Header.Get("Server"); sv != "" {
 			header += "Server: " + sv + "\n"
 		}
@@ -229,8 +259,8 @@ func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *
 			} else {
 				out = htmlToMarkdown(doc)
 				if in.Extract {
-					if recon := extractRecon(doc); recon != "" {
-						out += "\n\n" + recon
+					if detail := extractPageDetail(doc); detail != "" {
+						out += "\n\n" + detail
 					}
 				}
 			}
@@ -341,9 +371,9 @@ func renderChildren(b *strings.Builder, n *html.Node) {
 	}
 }
 
-// extractRecon walks the document for security-relevant signal that Markdown
-// rendering drops: comments, script sources, inline endpoints, forms, meta, links.
-func extractRecon(doc *html.Node) string {
+// extractPageDetail walks the document for the detail that Markdown rendering
+// drops: comments, script sources, inline endpoints, forms, meta, links.
+func extractPageDetail(doc *html.Node) string {
 	var comments, scriptSrcs, inlineEndpoints, forms, metas, links []string
 	seenLink := map[string]bool{}
 
@@ -390,21 +420,21 @@ func extractRecon(doc *html.Node) string {
 	walk(doc)
 
 	var b strings.Builder
-	b.WriteString("=== RECON ===")
-	reconSection(&b, "COMMENTS", comments)
-	reconSection(&b, "SCRIPTS (src)", dedup(scriptSrcs))
-	reconSection(&b, "INLINE ENDPOINTS", dedup(inlineEndpoints))
-	reconSection(&b, "FORMS", forms)
-	reconSection(&b, "META", metas)
-	reconSection(&b, "LINKS", capSlice(links, 100))
-	if b.Len() == len("=== RECON ===") {
+	b.WriteString(extractHeader)
+	extractSection(&b, "COMMENTS", comments)
+	extractSection(&b, "SCRIPTS (src)", dedup(scriptSrcs))
+	extractSection(&b, "INLINE ENDPOINTS", dedup(inlineEndpoints))
+	extractSection(&b, "FORMS", forms)
+	extractSection(&b, "META", metas)
+	extractSection(&b, "LINKS", capSlice(links, 100))
+	if b.Len() == len(extractHeader) {
 		return "" // nothing worth reporting
 	}
 	return b.String()
 }
 
 // describeForm summarizes a <form> as "METHOD action → name(type[=value]) …".
-// Hidden inputs keep their value (CSRF tokens, parameter defaults matter in recon).
+// Hidden inputs keep their value (a CSRF token or a default parameter is part of how the form works).
 func describeForm(form *html.Node) string {
 	method := strings.ToUpper(attr(form, "method"))
 	if method == "" {
@@ -437,6 +467,12 @@ func describeForm(form *html.Node) string {
 	return fmt.Sprintf("%s %s → %s", method, attr(form, "action"), strings.Join(inputs, " "))
 }
 
+// extractHeader opens the section extract=true appends.
+const extractHeader = "=== EXTRACT ==="
+
+// fetchUserAgent names the client; it carries no version, so it never goes stale.
+const fetchUserAgent = "corvid"
+
 // --- small helpers ---
 
 func attr(n *html.Node, key string) string {
@@ -466,7 +502,7 @@ func oneLine(s string, max int) string {
 	return s
 }
 
-func reconSection(b *strings.Builder, title string, items []string) {
+func extractSection(b *strings.Builder, title string, items []string) {
 	if len(items) == 0 {
 		return
 	}

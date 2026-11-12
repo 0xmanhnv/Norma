@@ -66,6 +66,17 @@ With the default policy, compared with before:
 - A panic in a permission check, a hook or a result rewriter fails that call instead
   of ending the process; a call queued behind others does not start once the run is
   cancelled or out of time.
+- **TodoWrite offers `meta` as a list of pairs.** The tool's schema describes it as
+  `[{"key": "...", "value": "..."}]` instead of an object with free-form keys, which a
+  provider's strict tool-call mode cannot take (a host that sends tools in strict mode
+  had to send TodoWrite without it). Nothing stored changes: `Todo.Meta` is still a
+  `map[string]string`, a todo is still written as `"meta": {...}`, and reading accepts
+  the object, the list of pairs and the old `"ref"` object. A caller that hands the
+  tool a `meta` object directly now fails the schema check; send the pairs.
+- **WebFetch with `extract=true`** closes its extra section with the header
+  `=== EXTRACT ===` (it was `=== RECON ===`), and the tool text calls it the extract
+  section. The content is unchanged. The request's `User-Agent` is `corvid`
+  (it was `corvid/0.4`, a version that no longer existed).
 
 ### Upgrading
 
@@ -78,6 +89,9 @@ With the default policy, compared with before:
   under the deferred tool's name).
 - A host that wraps tools keeps the deferred path working as long as its wrapper
   passes the `ToolContext` it receives to the wrapped tool's `Call`.
+- A host that reads WebFetch's extract section by its header: look for
+  `=== EXTRACT ===`. A host that gave the model `meta` objects for TodoWrite: the
+  schema now asks for `[{"key", "value"}]` pairs, so say so in its prompt.
 
 ### Changed
 
@@ -204,6 +218,11 @@ With the default policy, compared with before:
   calibrated for dense content; it used to cover messages only at a fixed ratio.
 
 ### Added
+
+- `tool.WebFetchConfig.AllowStaticAssets` and `Options.WebFetchAllowStaticAssets`: let
+  WebFetch fetch scripts, styles, source maps, images, fonts and media by URL. The
+  default is unchanged (it refuses them, and its description tells the model so); with
+  the option the refusal and that text are gone.
 
 - **A hard spending limit shared with subagents.** `QueryInput.Budget` /
   `Options.Budget` (`harness.Budget`, `harness.NewBudget`) is charged after every
