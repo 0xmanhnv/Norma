@@ -107,6 +107,9 @@ func newSearchProvider(cfg WebSearchConfig) (searchProvider, error) {
 		backend = "ddgs"
 	}
 	client := newFetchClient(WebFetchConfig{Proxy: cfg.Proxy, CACert: cfg.CACert, InsecureTLS: cfg.InsecureTLS})
+	// The backends carry their key in a header (Brave, DeepSeek) or in the
+	// body (Tavily); neither may follow a redirect to another host.
+	client.CheckRedirect = credentialRedirect
 	switch backend {
 	case "ddgs":
 		return &ddgsProvider{client: client, endpoint: ddgsEndpoint}, nil

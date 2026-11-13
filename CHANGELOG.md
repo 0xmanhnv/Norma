@@ -6,6 +6,17 @@ entries under **Unreleased** are on `dev` and not yet in a tagged release.
 
 ## Unreleased
 
+### Security
+
+- **web_search keys stay on their own host.** The search backends carry an API key in a
+  header (Brave's `X-Subscription-Token`, DeepSeek's `x-api-key`) or in the request body
+  (Tavily). Go's default redirect policy drops only `Authorization` and `Cookie` on a
+  redirect to another host and resends the body on 307 and 308, so a backend that
+  redirected elsewhere handed the key on. The search client now drops every header but
+  a few harmless ones on a redirect to another host, refuses a redirect that resends the
+  body, and never follows https to plain http. Redirects on the same host are followed
+  as before. WebFetch, which carries no key, is unchanged.
+
 ### Added
 
 - **A schema-checked final answer.** `agentcore.Options.FinalOutput` (`Schema`, a JSON
